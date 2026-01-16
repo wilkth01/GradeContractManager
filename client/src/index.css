@@ -1,0 +1,425 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Import a better font stack */
+  :root {
+    /* Light mode - Clean, professional with Widener blue */
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Widener Blue - enhanced for better contrast */
+    --primary: 204 100% 40%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Warm secondary for contrast */
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    /* Accent with Widener gold hint */
+    --accent: 45 93% 58%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 204 100% 40%;
+
+    --radius: 0.625rem;
+
+    /* Chart colors - vibrant and accessible */
+    --chart-1: 204 100% 40%;
+    --chart-2: 152 76% 36%;
+    --chart-3: 45 93% 47%;
+    --chart-4: 271 76% 53%;
+    --chart-5: 0 84% 60%;
+
+    /* Success, warning, info colors */
+    --success: 152 76% 36%;
+    --success-foreground: 0 0% 100%;
+    --warning: 45 93% 47%;
+    --warning-foreground: 222 47% 11%;
+    --info: 204 100% 40%;
+    --info-foreground: 0 0% 100%;
+
+    /* Sidebar */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 204 100% 40%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 96%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 204 100% 40%;
+  }
+
+  .dark {
+    /* Dark mode - Rich, high contrast, easy on eyes */
+    --background: 222 47% 8%;
+    --foreground: 210 40% 96%;
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 96%;
+
+    /* Brighter primary for dark mode visibility */
+    --primary: 204 100% 55%;
+    --primary-foreground: 222 47% 8%;
+
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    /* Gold accent pops in dark mode */
+    --accent: 45 93% 58%;
+    --accent-foreground: 222 47% 8%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217 33% 20%;
+    --input: 217 33% 20%;
+    --ring: 204 100% 55%;
+
+    /* Chart colors - brighter for dark mode */
+    --chart-1: 204 100% 60%;
+    --chart-2: 152 76% 50%;
+    --chart-3: 45 93% 58%;
+    --chart-4: 271 76% 65%;
+    --chart-5: 0 84% 65%;
+
+    /* Success, warning, info - adjusted for dark */
+    --success: 152 76% 45%;
+    --success-foreground: 222 47% 8%;
+    --warning: 45 93% 55%;
+    --warning-foreground: 222 47% 8%;
+    --info: 204 100% 55%;
+    --info-foreground: 222 47% 8%;
+
+    /* Sidebar dark */
+    --sidebar-background: 222 47% 10%;
+    --sidebar-foreground: 210 40% 96%;
+    --sidebar-primary: 204 100% 55%;
+    --sidebar-primary-foreground: 222 47% 8%;
+    --sidebar-accent: 217 33% 17%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 217 33% 20%;
+    --sidebar-ring: 204 100% 55%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    font-size: 16px;
+    line-height: 1.7;
+    letter-spacing: -0.01em;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Better heading hierarchy */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-bold tracking-tight;
+    line-height: 1.2;
+  }
+
+  h1 {
+    @apply text-4xl md:text-5xl;
+    letter-spacing: -0.025em;
+  }
+
+  h2 {
+    @apply text-3xl md:text-4xl;
+    letter-spacing: -0.02em;
+  }
+
+  h3 {
+    @apply text-2xl md:text-3xl;
+  }
+
+  h4 {
+    @apply text-xl md:text-2xl;
+  }
+
+  /* Enhanced focus styles for accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* Ensure interactive elements have sufficient touch targets */
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  [role="button"] {
+    min-height: 44px;
+  }
+
+  /* Better link styling */
+  a:not([class]) {
+    @apply text-primary underline-offset-4 hover:underline;
+    transition: color 0.2s ease;
+  }
+
+  /* Selection styling */
+  ::selection {
+    @apply bg-primary/20 text-foreground;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-muted;
+    border-radius: 5px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/30;
+    border-radius: 5px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/50;
+  }
+}
+
+@layer components {
+  /* Status badges with proper dark mode support */
+  .status-completed {
+    @apply text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/50 dark:border-emerald-800;
+  }
+
+  .status-in-progress {
+    @apply text-amber-700 bg-amber-50 border-amber-200 dark:text-amber-300 dark:bg-amber-950/50 dark:border-amber-800;
+  }
+
+  .status-not-submitted {
+    @apply text-slate-600 bg-slate-100 border-slate-200 dark:text-slate-400 dark:bg-slate-800/50 dark:border-slate-700;
+  }
+
+  .status-needs-revision {
+    @apply text-rose-700 bg-rose-50 border-rose-200 dark:text-rose-300 dark:bg-rose-950/50 dark:border-rose-800;
+  }
+
+  /* Grade badges */
+  .grade-a {
+    @apply text-emerald-700 bg-emerald-100 dark:text-emerald-300 dark:bg-emerald-950/50;
+  }
+
+  .grade-b {
+    @apply text-blue-700 bg-blue-100 dark:text-blue-300 dark:bg-blue-950/50;
+  }
+
+  .grade-c {
+    @apply text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-950/50;
+  }
+
+  /* Screen reader only text */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Skip link for keyboard navigation */
+  .skip-link {
+    @apply absolute -top-12 left-4 z-50 bg-primary text-primary-foreground px-4 py-2 rounded-md font-medium;
+    transition: top 0.2s ease;
+  }
+
+  .skip-link:focus {
+    @apply top-4;
+  }
+
+  /* Page header gradient */
+  .page-header {
+    @apply relative overflow-hidden;
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(204 100% 30%) 100%);
+  }
+
+  .page-header::before {
+    content: '';
+    @apply absolute inset-0 opacity-10;
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  }
+
+  /* Card enhancements */
+  .card-hover {
+    @apply transition-all duration-300 ease-out;
+  }
+
+  .card-hover:hover {
+    @apply shadow-lg -translate-y-1;
+  }
+
+  .dark .card-hover:hover {
+    @apply shadow-xl shadow-black/20;
+  }
+
+  /* Glass morphism effect */
+  .glass {
+    @apply bg-white/80 dark:bg-slate-900/80 backdrop-blur-md;
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(204 100% 55%) 100%);
+  }
+
+  /* Animated underline for links */
+  .animated-underline {
+    @apply relative;
+  }
+
+  .animated-underline::after {
+    content: '';
+    @apply absolute left-0 bottom-0 w-0 h-0.5 bg-primary transition-all duration-300;
+  }
+
+  .animated-underline:hover::after {
+    @apply w-full;
+  }
+
+  /* Form input enhancements */
+  .input-enhanced {
+    @apply transition-all duration-200 border-2;
+  }
+
+  .input-enhanced:focus {
+    @apply border-primary shadow-sm shadow-primary/20;
+  }
+
+  /* Loading skeleton animation */
+  .skeleton-loading {
+    @apply animate-pulse bg-muted rounded;
+  }
+
+  /* Container with max-width */
+  .container-wide {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Responsive text utilities */
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Image container with aspect ratio */
+  .img-container {
+    @apply relative overflow-hidden rounded-lg;
+  }
+
+  .img-container img {
+    @apply w-full h-full object-cover transition-transform duration-300;
+  }
+
+  .img-container:hover img {
+    @apply scale-105;
+  }
+}
+
+@layer utilities {
+  /* Animation utilities */
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-out forwards;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.5s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.3s ease-out forwards;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* Gradient backgrounds */
+  .bg-gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(204 100% 30%) 100%);
+  }
+
+  .bg-gradient-accent {
+    background: linear-gradient(135deg, hsl(var(--accent)) 0%, hsl(45 93% 45%) 100%);
+  }
+
+  /* Text shadow for headers on images */
+  .text-shadow {
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .text-shadow-lg {
+    text-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Soft glow effect */
+  .glow-primary {
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.3);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 20px hsl(var(--accent) / 0.3);
+  }
+}

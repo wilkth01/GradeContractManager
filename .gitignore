@@ -1,0 +1,31 @@
+node_modules
+dist
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Replit files (can be kept for backward compatibility or removed)
+.replit
+replit.nix
+replit.md
+
+# IDE
+.idea
+.vscode
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+Thumbs.db
+
+# Credentials (never commit these)
+cookies.txt
+credentials.json
