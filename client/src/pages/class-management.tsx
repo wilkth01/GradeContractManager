@@ -703,10 +703,20 @@ export default function ClassManagement() {
 
                     {/* Student List */}
                     {(() => {
+                      // Extract last name - handles "LastName, FirstName" or "FirstName LastName" formats
+                      const getLastName = (fullName: string) => {
+                        if (fullName.includes(',')) {
+                          // "Grossman, Abigail" -> "Grossman"
+                          return fullName.split(',')[0].trim().toLowerCase();
+                        }
+                        // "Abigail Grossman" -> "Grossman"
+                        return fullName.split(' ').slice(-1)[0].toLowerCase();
+                      };
+
                       const filteredStudents = [...students]
                         .sort((a, b) => {
-                          const lastNameA = a.fullName.split(' ').slice(-1)[0].toLowerCase();
-                          const lastNameB = b.fullName.split(' ').slice(-1)[0].toLowerCase();
+                          const lastNameA = getLastName(a.fullName);
+                          const lastNameB = getLastName(b.fullName);
                           return lastNameA.localeCompare(lastNameB);
                         })
                         .filter((student) => {
