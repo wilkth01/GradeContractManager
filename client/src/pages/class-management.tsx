@@ -32,7 +32,14 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, CheckCircle2, XCircle, Circle, Edit2, ArrowLeft, TrendingUp, Target, Settings } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, Circle, Edit2, ArrowLeft, TrendingUp, Target, Settings, Search } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { CreateAssignmentDialog } from "@/components/dialogs/create-assignment-dialog";
 import { CreateGradeContractDialog } from "@/components/dialogs/create-grade-contract-dialog";
 import { EditGradeContractDialog } from "@/components/dialogs/edit-grade-contract-dialog";
@@ -180,6 +187,8 @@ export default function ClassManagement() {
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [description, setDescription] = useState<string>("");
   const [isInviteStudentsOpen, setIsInviteStudentsOpen] = useState(false);
+  const [studentSearch, setStudentSearch] = useState("");
+  const [contractFilter, setContractFilter] = useState<string>("all");
   const { user } = useAuth();
   const params = useParams<{ classId: string }>();
   const queryClient = useQueryClient();
@@ -665,114 +674,175 @@ export default function ClassManagement() {
                   </p>
                 ) : (
                   <div className="space-y-6">
-                    {[...students].sort((a, b) => {
-                      // Extract last name (assumes format "First Last" or similar)
-                      const lastNameA = a.fullName.split(' ').slice(-1)[0].toLowerCase();
-                      const lastNameB = b.fullName.split(' ').slice(-1)[0].toLowerCase();
-                      return lastNameA.localeCompare(lastNameB);
-                    }).map((student) => {
-                      const contract = getStudentContract(student.id);
-                      const studentProgress = studentsProgress?.filter(p => p.studentId === student.id) || [];
+                    {/* Search and Filter Controls */}
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search students by name..."
+                          value={studentSearch}
+                          onChange={(e) => setStudentSearch(e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+                      <Select value={contractFilter} onValueChange={setContractFilter}>
+                        <SelectTrigger className="w-full sm:w-[200px]">
+                          <SelectValue placeholder="Filter by contract" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Students</SelectItem>
+                          <SelectItem value="none">No Contract Selected</SelectItem>
+                          {contracts?.map((contract) => (
+                            <SelectItem key={contract.id} value={contract.grade}>
+                              Grade {contract.grade} Contract
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Student List */}
+                    {(() => {
+                      const filteredStudents = [...students]
+                        .sort((a, b) => {
+                          const lastNameA = a.fullName.split(' ').slice(-1)[0].toLowerCase();
+                          const lastNameB = b.fullName.split(' ').slice(-1)[0].toLowerCase();
+                          return lastNameA.localeCompare(lastNameB);
+                        })
+                        .filter((student) => {
+                          const searchLower = studentSearch.toLowerCase();
+                          const matchesSearch = studentSearch === "" ||
+                            student.fullName.toLowerCase().includes(searchLower) ||
+                            student.username.toLowerCase().includes(searchLower);
+                          const studentContract = getStudentContract(student.id);
+                          let matchesContract = true;
+                          if (contractFilter === "none") {
+                            matchesContract = !studentContract;
+                          } else if (contractFilter !== "all") {
+                            matchesContract = studentContract?.grade === contractFilter;
+                          }
+                          return matchesSearch && matchesContract;
+                        });
+
+                      if (filteredStudents.length === 0) {
+                        return (
+                          <p className="text-center text-muted-foreground py-8">
+                            No students match your search or filter criteria.
+                          </p>
+                        );
+                      }
 
                       return (
-                        <Card key={student.id} className="relative">
-                          <CardHeader>
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <CardTitle className="text-base">{student.fullName}</CardTitle>
-                                <CardDescription>{student.username}</CardDescription>
-                              </div>
-                              <div className="space-x-2">
-                                <ViewStudentProfileDialog
-                                  student={student}
-                                  classId={parsedClassId}
-                                />
-                              </div>
-                            </div>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="space-y-4">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="font-medium">Selected Contract:</p>
-                                  <p className="text-sm text-muted-foreground">
-                                    {contract ? `Grade ${contract.grade}` : 'No contract selected'}
-                                  </p>
-                                </div>
-                                {contract && contract.maxAbsences !== undefined && (
-                                  <div className="flex items-center space-x-2">
-                                    <label htmlFor={`absences-${student.id}`} className="text-sm font-medium">
-                                      Absences:
-                                    </label>
-                                    <Input
-                                      id={`absences-${student.id}`}
-                                      type="number"
-                                      min="0"
-                                      className="w-20"
-                                      defaultValue={
-                                        Array.isArray(allAttendanceRecords) 
-                                          ? allAttendanceRecords.filter((r: any) => r.studentId === student.id && !r.isPresent).length 
-                                          : 0
-                                      }
-                                      onBlur={(e) => {
-                                        const absences = parseInt(e.target.value) || 0;
-                                        updateAbsencesMutation.mutate({ studentId: student.id, absences });
-                                      }}
-                                    />
-                                    <span className="text-sm text-muted-foreground">
-                                      / {contract.maxAbsences}
-                                    </span>
+                        <>
+                          <p className="text-sm text-muted-foreground">
+                            Showing {filteredStudents.length} of {students.length} student{students.length !== 1 ? 's' : ''}
+                          </p>
+                          {filteredStudents.map((student) => {
+                            const contract = getStudentContract(student.id);
+                            const studentProgress = studentsProgress?.filter(p => p.studentId === student.id) || [];
+
+                            return (
+                              <Card key={student.id} className="relative">
+                                <CardHeader>
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <CardTitle className="text-base">{student.fullName}</CardTitle>
+                                      <CardDescription>{student.username}</CardDescription>
+                                    </div>
+                                    <div className="space-x-2">
+                                      <ViewStudentProfileDialog
+                                        student={student}
+                                        classId={parsedClassId}
+                                      />
+                                    </div>
                                   </div>
-                                )}
-                              </div>
-                              {contract && (
-                                <div>
-                                  <p className="font-medium mb-2">Required Assignments:</p>
-                                  <div className="space-y-2">
-                                    {contract.assignments && contract.assignments.map(req => {
-                                      const assignment = assignments?.find(a => a.id === req.id);
-                                      if (!assignment) return null;
-
-                                      const assignmentProgress = studentProgress.find(p => p.assignmentId === assignment.id);
-                                      const status = getAssignmentStatus(assignment, assignmentProgress);
-
-                                      return (
-                                        <div key={assignment.id} className="flex items-center justify-between">
-                                          <div className="flex items-center space-x-2">
-                                            {assignment.scoringType === "status" && getStatusIcon(status)}
-                                            <span className="text-sm">
-                                              {assignment.name}
-                                              {req.comments && (
-                                                <span className="text-muted-foreground ml-1">
-                                                  ({req.comments})
-                                                </span>
-                                              )}
-                                            </span>
-                                          </div>
-                                          <div className="flex items-center space-x-2">
-                                            {assignmentProgress && assignment.scoringType === "numeric" && assignmentProgress.numericGrade !== null && (
-                                              <span className="text-sm mr-2">
-                                                Score: {parseFloat(assignmentProgress.numericGrade).toFixed(1)}
-                                              </span>
-                                            )}
-                                            <UpdateAssignmentStatusDialog
-                                              classId={parsedClassId}
-                                              studentId={student.id}
-                                              assignment={assignment}
-                                              currentProgress={assignmentProgress}
-                                            />
-                                          </div>
+                                </CardHeader>
+                                <CardContent>
+                                  <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                      <div>
+                                        <p className="font-medium">Selected Contract:</p>
+                                        <p className="text-sm text-muted-foreground">
+                                          {contract ? `Grade ${contract.grade}` : 'No contract selected'}
+                                        </p>
+                                      </div>
+                                      {contract && contract.maxAbsences !== undefined && (
+                                        <div className="flex items-center space-x-2">
+                                          <label htmlFor={`absences-${student.id}`} className="text-sm font-medium">
+                                            Absences:
+                                          </label>
+                                          <Input
+                                            id={`absences-${student.id}`}
+                                            type="number"
+                                            min="0"
+                                            className="w-20"
+                                            defaultValue={
+                                              Array.isArray(allAttendanceRecords)
+                                                ? allAttendanceRecords.filter((r: any) => r.studentId === student.id && !r.isPresent).length
+                                                : 0
+                                            }
+                                            onBlur={(e) => {
+                                              const absences = parseInt(e.target.value) || 0;
+                                              updateAbsencesMutation.mutate({ studentId: student.id, absences });
+                                            }}
+                                          />
+                                          <span className="text-sm text-muted-foreground">
+                                            / {contract.maxAbsences}
+                                          </span>
                                         </div>
-                                      );
-                                    })}
+                                      )}
+                                    </div>
+                                    {contract && (
+                                      <div>
+                                        <p className="font-medium mb-2">Required Assignments:</p>
+                                        <div className="space-y-2">
+                                          {contract.assignments && contract.assignments.map(req => {
+                                            const assignment = assignments?.find(a => a.id === req.id);
+                                            if (!assignment) return null;
+
+                                            const assignmentProgress = studentProgress.find(p => p.assignmentId === assignment.id);
+                                            const status = getAssignmentStatus(assignment, assignmentProgress);
+
+                                            return (
+                                              <div key={assignment.id} className="flex items-center justify-between">
+                                                <div className="flex items-center space-x-2">
+                                                  {assignment.scoringType === "status" && getStatusIcon(status)}
+                                                  <span className="text-sm">
+                                                    {assignment.name}
+                                                    {req.comments && (
+                                                      <span className="text-muted-foreground ml-1">
+                                                        ({req.comments})
+                                                      </span>
+                                                    )}
+                                                  </span>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                  {assignmentProgress && assignment.scoringType === "numeric" && assignmentProgress.numericGrade !== null && (
+                                                    <span className="text-sm mr-2">
+                                                      Score: {parseFloat(assignmentProgress.numericGrade).toFixed(1)}
+                                                    </span>
+                                                  )}
+                                                  <UpdateAssignmentStatusDialog
+                                                    classId={parsedClassId}
+                                                    studentId={student.id}
+                                                    assignment={assignment}
+                                                    currentProgress={assignmentProgress}
+                                                  />
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
-                                </div>
-                              )}
-                            </div>
-                          </CardContent>
-                        </Card>
+                                </CardContent>
+                              </Card>
+                            );
+                          })}
+                        </>
                       );
-                    })}
+                    })()}
                   </div>
                 )}
               </CardContent>

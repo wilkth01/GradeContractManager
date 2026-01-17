@@ -298,7 +298,8 @@ export default function AuthPage() {
             <img
               src="/images/widener-logo.png"
               alt="Widener University Logo"
-              className="h-20 w-auto brightness-0 invert drop-shadow-lg"
+              className="h-24 w-auto object-contain drop-shadow-lg"
+              style={{ filter: 'drop-shadow(0 0 10px rgba(255,255,255,0.3))' }}
             />
           </div>
 
