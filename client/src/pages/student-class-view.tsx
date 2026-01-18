@@ -493,13 +493,13 @@ const getAssignmentStatus = (assignment: Assignment, progress?: AssignmentProgre
 const getStatusIcon = (status: string) => {
   switch (status) {
     case "completed":
-      return <CheckCircle2 className="h-8 w-8 text-green-600" aria-hidden="true" />;
+      return <CheckCircle2 className="h-12 w-12 text-green-600" aria-hidden="true" />;
     case "in-progress":
-      return <Circle className="h-8 w-8 text-yellow-600" aria-hidden="true" />;
+      return <Circle className="h-12 w-12 text-yellow-600" aria-hidden="true" />;
     case "not-submitted":
-      return <XCircle className="h-8 w-8 text-gray-400" aria-hidden="true" />;
+      return <XCircle className="h-12 w-12 text-gray-400" aria-hidden="true" />;
     default:
-      return <XCircle className="h-8 w-8 text-gray-400" aria-hidden="true" />;
+      return <XCircle className="h-12 w-12 text-gray-400" aria-hidden="true" />;
   }
 };
 
