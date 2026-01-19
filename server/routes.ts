@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { auditService } from "./audit";
 import { connectionManager, createProgressUpdateEvent } from "./websocket";
 import { insertClassSchema, updateClassSchema, insertAssignmentSchema, insertStudentInvitationSchema, setupPasswordSchema, passwordResetRequestSchema, resetPasswordSchema, insertEngagementIntentionSchema, updateEngagementIntentionSchema, insertAttendanceRecordSchema, updateAttendanceRecordSchema } from "@shared/schema";
+import { AssignmentStatus, isAssignmentDone } from "@shared/constants";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
@@ -215,18 +216,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         students.forEach((student, studentIndex) => {
           const studentProgress = allProgress[studentIndex];
           const assignmentProgress = studentProgress.find(p => p.assignmentId === assignment.id);
-          
-          if (!assignmentProgress || (assignmentProgress.status ?? 0) === 0) {
+          const status = assignmentProgress?.status ?? AssignmentStatus.NOT_STARTED;
+
+          if (!assignmentProgress || status === AssignmentStatus.NOT_STARTED) {
             statusBreakdown.notStarted++;
-          } else if ((assignmentProgress.status ?? 0) === 1) {
+          } else if (status === AssignmentStatus.IN_PROGRESS) {
             statusBreakdown.inProgress++;
-          } else if ((assignmentProgress.status ?? 0) === 2) {
+          } else if (status === AssignmentStatus.COMPLETED) {
             statusBreakdown.completed++;
-          } else if ((assignmentProgress.status ?? 0) === 3) {
+          } else if (status === AssignmentStatus.EXCELLENT) {
             statusBreakdown.excellent++;
           }
 
-          if (assignmentProgress && (assignmentProgress.status ?? 0) >= 2) {
+          if (assignmentProgress && isAssignmentDone(status)) {
             totalProgress++;
           }
         });
@@ -244,8 +246,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const studentPerformance = students.map((student, studentIndex) => {
         const studentProgress = allProgress[studentIndex];
         const studentContract = studentContracts.find(sc => sc.studentId === student.id);
-        
-        const completedAssignments = studentProgress.filter(p => (p.status ?? 0) >= 2).length;
+
+        const completedAssignments = studentProgress.filter(p => isAssignmentDone(p.status)).length;
         const progressScore = assignments.length > 0 ? Math.round((completedAssignments / assignments.length) * 100) : 0;
         
         // Find most recent activity

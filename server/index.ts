@@ -7,6 +7,7 @@ import { setupWebSocket } from "./websocket";
 import { getSessionConfig } from "./auth";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
+import { AppError, ValidationError } from "./errors";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -88,20 +89,42 @@ app.get("/api/health", (_req, res) => {
     console.error("Failed to initialize WebSocket:", error);
   }
 
-  // Error handling middleware
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    console.error("Error details:", {
+  // Centralized error handling middleware
+  app.use((err: Error | AppError, _req: Request, res: Response, _next: NextFunction) => {
+    // Log error details (always log for debugging)
+    console.error("Error:", {
+      name: err.name,
       message: err.message,
-      stack: err.stack,
-      status: err.status || err.statusCode || 500
+      stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
+      ...(err instanceof AppError && { statusCode: err.statusCode, isOperational: err.isOperational }),
     });
 
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    // Handle known operational errors (AppError instances)
+    if (err instanceof AppError) {
+      const response: Record<string, unknown> = { message: err.message };
 
-    res.status(status).json({ 
+      // Include validation errors if present
+      if (err instanceof ValidationError && Object.keys(err.errors).length > 0) {
+        response.errors = err.errors;
+      }
+
+      // Include stack trace in development
+      if (process.env.NODE_ENV === "development") {
+        response.stack = err.stack;
+      }
+
+      return res.status(err.statusCode).json(response);
+    }
+
+    // Handle unknown errors (programming errors, etc.)
+    const statusCode = 500;
+    const message = process.env.NODE_ENV === "production"
+      ? "Internal server error"
+      : err.message || "Internal server error";
+
+    res.status(statusCode).json({
       message,
-      error: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
     });
   });
 

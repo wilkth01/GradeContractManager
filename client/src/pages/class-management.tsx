@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Class, Assignment, GradeContract, User, AssignmentProgress, insertClassSchema } from "@shared/schema";
+import { AssignmentStatus } from "@shared/constants";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -351,8 +352,8 @@ export default function ClassManagement() {
 
     if (assignment.scoringType === "status") {
       switch (progress.status) {
-        case 2: return "completed";
-        case 1: return "in-progress";
+        case AssignmentStatus.COMPLETED: return "completed";
+        case AssignmentStatus.IN_PROGRESS: return "in-progress";
         default: return "not-submitted";
       }
     } else if (assignment.scoringType === "attendance") {

@@ -3,6 +3,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useParams, useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Class, Assignment, User, AssignmentProgress, StudentContract, GradeContract } from "@shared/schema";
+import { AssignmentStatus, getAssignmentStatusLabel } from "@shared/constants";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -83,23 +84,16 @@ export default function ClassAnalytics() {
 
   const getStatusColor = (status: number): string => {
     switch (status) {
-      case 0: return "bg-slate-200 text-slate-700";
-      case 1: return "bg-yellow-200 text-yellow-800";
-      case 2: return "bg-blue-200 text-blue-800";
-      case 3: return "bg-green-200 text-green-800";
+      case AssignmentStatus.NOT_STARTED: return "bg-slate-200 text-slate-700";
+      case AssignmentStatus.IN_PROGRESS: return "bg-yellow-200 text-yellow-800";
+      case AssignmentStatus.COMPLETED: return "bg-blue-200 text-blue-800";
+      case AssignmentStatus.EXCELLENT: return "bg-green-200 text-green-800";
       default: return "bg-slate-200 text-slate-700";
     }
   };
 
-  const getStatusLabel = (status: number): string => {
-    switch (status) {
-      case 0: return "Not Started";
-      case 1: return "In Progress";
-      case 2: return "Completed";
-      case 3: return "Excellent";
-      default: return "Not Started";
-    }
-  };
+  // Use shared constant for status labels
+  const getStatusLabel = getAssignmentStatusLabel;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">

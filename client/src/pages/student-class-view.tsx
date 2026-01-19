@@ -2,6 +2,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Class, Assignment, GradeContract, AssignmentProgress } from "@shared/schema";
+import { AssignmentStatus } from "@shared/constants";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -527,8 +528,8 @@ const getAssignmentStatus = (assignment: Assignment, progress?: AssignmentProgre
 
   if (assignment.scoringType === "status") {
     switch (progress.status) {
-      case 2: return "completed";
-      case 1: return "in-progress";
+      case AssignmentStatus.COMPLETED: return "completed";
+      case AssignmentStatus.IN_PROGRESS: return "in-progress";
       default: return "not-submitted";
     }
   } else {
