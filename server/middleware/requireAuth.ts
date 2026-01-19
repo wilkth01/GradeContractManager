@@ -1,5 +1,15 @@
 import type { Request, Response, NextFunction } from "express";
 import { storage } from "../storage";
+import type { Class } from "@shared/schema";
+
+// Extend Express Request to include attached class data
+declare global {
+  namespace Express {
+    interface Request {
+      cls?: Class;
+    }
+  }
+}
 
 /**
  * Middleware to require authentication
@@ -65,7 +75,7 @@ export function requireClassOwner(paramName: string = "classId") {
     }
 
     // Attach class to request for use in route handlers
-    (req as any).cls = cls;
+    req.cls = cls;
     next();
   };
 }
@@ -102,7 +112,7 @@ export function requireClassMember(paramName: string = "classId") {
     }
 
     // Attach class to request for use in route handlers
-    (req as any).cls = cls;
+    req.cls = cls;
     next();
   };
 }

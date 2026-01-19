@@ -8,6 +8,11 @@ import { parse as parseCookie } from "cookie";
 export { connectionManager } from "./connections";
 export * from "./events";
 
+// Extended WebSocket type with user info
+interface AuthenticatedWebSocket extends WebSocket {
+  userId?: number;
+}
+
 interface SubscribeMessage {
   type: "subscribe";
   classId: number;
@@ -29,7 +34,7 @@ export function setupWebSocket(
 ): WebSocketServer {
   const wss = new WebSocketServer({ server, path: "/ws" });
 
-  wss.on("connection", async (ws: WebSocket, req: IncomingMessage) => {
+  wss.on("connection", async (ws: AuthenticatedWebSocket, req: IncomingMessage) => {
     console.log("WebSocket: New connection attempt");
 
     // Parse session from cookie
@@ -61,7 +66,7 @@ export function setupWebSocket(
       console.log(`WebSocket: Authenticated user ${userId}`);
 
       // Store user info on the WebSocket for later use
-      (ws as any).userId = userId;
+      ws.userId = userId;
 
       // Handle messages from client
       ws.on("message", async (data: Buffer) => {

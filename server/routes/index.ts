@@ -5,7 +5,18 @@ import auditRouter from "./audit";
 import canvasImportRouter from "./canvas-import";
 
 /**
- * Register all route modules with the Express app
+ * IMPORTANT: This module is NOT currently in use.
+ *
+ * All routes are currently defined in the monolithic routes.ts file.
+ * These modular route files were created as part of an incomplete refactoring effort.
+ *
+ * DO NOT call registerRouteModules() without first removing duplicate routes from routes.ts,
+ * or you will get conflicting route handlers.
+ *
+ * Future refactoring plan:
+ * 1. Extract remaining routes from routes.ts into modules
+ * 2. Remove duplicates from routes.ts
+ * 3. Call registerRouteModules() from server/index.ts
  */
 export function registerRouteModules(app: Express): void {
   // Register route modules
