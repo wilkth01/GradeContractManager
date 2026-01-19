@@ -340,11 +340,58 @@ export default function StudentClassView() {
                               [group]: [...(groups[group] || []), { assignment, req }]
                             };
                           }, {} as Record<string, { assignment: Assignment; req: { id: number; comments?: string } }[]>)
-                        ).map(([group, assignments]) => (
-                          <div key={group} className="space-y-6" role="region" aria-labelledby={`group-${group}`}>
-                            <h4 id={`group-${group}`} className="font-bold text-xl text-[#0072BC]">{group}</h4>
+                        ).map(([group, groupAssignments]) => {
+                          // Calculate group progress statistics
+                          const groupStats = groupAssignments.reduce(
+                            (stats, { assignment }) => {
+                              const progress = studentProgress?.find(p => p.assignmentId === assignment.id);
+                              const status = getAssignmentStatus(assignment, progress);
+                              if (status === "completed") stats.completed++;
+                              else if (status === "in-progress") stats.inProgress++;
+                              else stats.notSubmitted++;
+                              return stats;
+                            },
+                            { completed: 0, inProgress: 0, notSubmitted: 0 }
+                          );
+                          const totalInGroup = groupAssignments.length;
+
+                          return (
+                          <div key={group} className="space-y-4" role="region" aria-labelledby={`group-${group}`}>
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                              <h4 id={`group-${group}`} className="font-bold text-xl text-[#0072BC]">{group}</h4>
+                              <div className="flex items-center gap-4 text-sm">
+                                <div className="flex items-center gap-1.5">
+                                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                                  <span className="font-medium">{groupStats.completed}</span>
+                                  <span className="text-muted-foreground">Completed</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <Circle className="h-4 w-4 text-yellow-600" />
+                                  <span className="font-medium">{groupStats.inProgress}</span>
+                                  <span className="text-muted-foreground">In Progress</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <XCircle className="h-4 w-4 text-gray-400" />
+                                  <span className="font-medium">{groupStats.notSubmitted}</span>
+                                  <span className="text-muted-foreground">Remaining</span>
+                                </div>
+                              </div>
+                            </div>
+                            {/* Progress bar for the group */}
+                            <div className="w-full bg-gray-200 rounded-full h-2.5">
+                              <div className="flex h-2.5 rounded-full overflow-hidden">
+                                <div
+                                  className="bg-green-600 h-2.5"
+                                  style={{ width: `${(groupStats.completed / totalInGroup) * 100}%` }}
+                                />
+                                <div
+                                  className="bg-yellow-500 h-2.5"
+                                  style={{ width: `${(groupStats.inProgress / totalInGroup) * 100}%` }}
+                                />
+                              </div>
+                            </div>
                             <div className="grid gap-6 sm:grid-cols-1 lg:grid-cols-2">
-                              {assignments.map(({ assignment, req }) => {
+                              {groupAssignments.map(({ assignment, req }) => {
                                 const progress = studentProgress?.find(
                                   p => p.assignmentId === assignment.id
                                 );
@@ -444,7 +491,7 @@ export default function StudentClassView() {
                               })}
                             </div>
                           </div>
-                        ))}
+                        )})}
                       </div>
                     ) : (
                       <div className="text-muted-foreground text-center py-8">

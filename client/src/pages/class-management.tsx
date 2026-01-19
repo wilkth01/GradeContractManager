@@ -805,43 +805,98 @@ export default function ClassManagement() {
                                     {contract && (
                                       <div>
                                         <p className="font-medium mb-2">Required Assignments:</p>
-                                        <div className="space-y-2">
-                                          {contract.assignments && contract.assignments.map(req => {
-                                            const assignment = assignments?.find(a => a.id === req.id);
-                                            if (!assignment) return null;
+                                        <div className="space-y-4">
+                                          {/* Group assignments by moduleGroup */}
+                                          {(() => {
+                                            const groupedReqs = contract.assignments?.reduce((groups, req) => {
+                                              const assignment = assignments?.find(a => a.id === req.id);
+                                              if (!assignment) return groups;
+                                              const group = assignment.moduleGroup || 'Uncategorized';
+                                              if (!groups[group]) groups[group] = [];
+                                              groups[group].push({ req, assignment });
+                                              return groups;
+                                            }, {} as Record<string, { req: { id: number; comments?: string }; assignment: Assignment }[]>);
 
-                                            const assignmentProgress = studentProgress.find(p => p.assignmentId === assignment.id);
-                                            const status = getAssignmentStatus(assignment, assignmentProgress);
+                                            return Object.entries(groupedReqs || {}).map(([groupName, groupItems]) => {
+                                              // Calculate group stats for this student
+                                              const groupStats = groupItems.reduce(
+                                                (stats, { assignment }) => {
+                                                  const progress = studentProgress.find(p => p.assignmentId === assignment.id);
+                                                  const status = getAssignmentStatus(assignment, progress);
+                                                  if (status === "completed") stats.completed++;
+                                                  else if (status === "in-progress") stats.inProgress++;
+                                                  else stats.notSubmitted++;
+                                                  return stats;
+                                                },
+                                                { completed: 0, inProgress: 0, notSubmitted: 0 }
+                                              );
+                                              const totalInGroup = groupItems.length;
 
-                                            return (
-                                              <div key={assignment.id} className="flex items-center justify-between">
-                                                <div className="flex items-center space-x-2">
-                                                  {assignment.scoringType === "status" && getStatusIcon(status)}
-                                                  <span className="text-sm">
-                                                    {assignment.name}
-                                                    {req.comments && (
-                                                      <span className="text-muted-foreground ml-1">
-                                                        ({req.comments})
+                                              return (
+                                                <div key={groupName} className="border-l-2 border-blue-200 pl-3">
+                                                  <div className="flex items-center justify-between mb-2">
+                                                    <span className="font-medium text-sm text-[#0072BC]">{groupName}</span>
+                                                    <div className="flex items-center gap-3 text-xs">
+                                                      <span className="flex items-center gap-1">
+                                                        <CheckCircle2 className="h-3 w-3 text-green-600" />
+                                                        {groupStats.completed}
                                                       </span>
-                                                    )}
-                                                  </span>
+                                                      <span className="flex items-center gap-1">
+                                                        <Circle className="h-3 w-3 text-yellow-600" />
+                                                        {groupStats.inProgress}
+                                                      </span>
+                                                      <span className="flex items-center gap-1">
+                                                        <XCircle className="h-3 w-3 text-gray-400" />
+                                                        {groupStats.notSubmitted}
+                                                      </span>
+                                                    </div>
+                                                  </div>
+                                                  {/* Mini progress bar */}
+                                                  <div className="w-full bg-gray-200 rounded-full h-1.5 mb-2">
+                                                    <div className="flex h-1.5 rounded-full overflow-hidden">
+                                                      <div className="bg-green-600" style={{ width: `${(groupStats.completed / totalInGroup) * 100}%` }} />
+                                                      <div className="bg-yellow-500" style={{ width: `${(groupStats.inProgress / totalInGroup) * 100}%` }} />
+                                                    </div>
+                                                  </div>
+                                                  <div className="space-y-1">
+                                                    {groupItems.map(({ req, assignment }) => {
+                                                      const assignmentProgress = studentProgress.find(p => p.assignmentId === assignment.id);
+                                                      const status = getAssignmentStatus(assignment, assignmentProgress);
+
+                                                      return (
+                                                        <div key={assignment.id} className="flex items-center justify-between">
+                                                          <div className="flex items-center space-x-2">
+                                                            {assignment.scoringType === "status" && getStatusIcon(status)}
+                                                            <span className="text-sm">
+                                                              {assignment.name}
+                                                              {req.comments && (
+                                                                <span className="text-muted-foreground ml-1">
+                                                                  ({req.comments})
+                                                                </span>
+                                                              )}
+                                                            </span>
+                                                          </div>
+                                                          <div className="flex items-center space-x-2">
+                                                            {assignmentProgress && assignment.scoringType === "numeric" && assignmentProgress.numericGrade !== null && (
+                                                              <span className="text-sm mr-2">
+                                                                Score: {parseFloat(assignmentProgress.numericGrade).toFixed(1)}
+                                                              </span>
+                                                            )}
+                                                            <UpdateAssignmentStatusDialog
+                                                              classId={parsedClassId}
+                                                              studentId={student.id}
+                                                              assignment={assignment}
+                                                              currentProgress={assignmentProgress}
+                                                            />
+                                                          </div>
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
                                                 </div>
-                                                <div className="flex items-center space-x-2">
-                                                  {assignmentProgress && assignment.scoringType === "numeric" && assignmentProgress.numericGrade !== null && (
-                                                    <span className="text-sm mr-2">
-                                                      Score: {parseFloat(assignmentProgress.numericGrade).toFixed(1)}
-                                                    </span>
-                                                  )}
-                                                  <UpdateAssignmentStatusDialog
-                                                    classId={parsedClassId}
-                                                    studentId={student.id}
-                                                    assignment={assignment}
-                                                    currentProgress={assignmentProgress}
-                                                  />
-                                                </div>
-                                              </div>
-                                            );
-                                          })}
+                                              );
+                                            });
+                                          })()}
                                         </div>
                                       </div>
                                     )}
