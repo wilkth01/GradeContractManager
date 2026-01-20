@@ -64,7 +64,7 @@ export default function InstructorEngagementDashboard() {
     enabled: !isNaN(parsedClassId) && !!user,
   });
 
-  const currentWeek = getCurrentWeekNumber(classData?.semesterStartDate);
+  const currentWeek = getCurrentWeekNumber(classData?.semesterStartDate ?? undefined);
 
   const isLoading = isLoadingClass || isLoadingIntentions || isLoadingStudents;
 

@@ -81,12 +81,12 @@ class ConnectionManager {
     const message = JSON.stringify(event);
     let sentCount = 0;
 
-    for (const conn of connections) {
+    Array.from(connections).forEach((conn) => {
       if (conn.ws.readyState === WebSocket.OPEN) {
         conn.ws.send(message);
         sentCount++;
       }
-    }
+    });
 
     console.log(
       `WebSocket: Broadcast ${event.type} to ${sentCount} connections in class ${classId}`
@@ -102,11 +102,11 @@ class ConnectionManager {
 
     const message = JSON.stringify(event);
 
-    for (const conn of connections) {
+    Array.from(connections).forEach((conn) => {
       if (conn.userId === userId && conn.ws.readyState === WebSocket.OPEN) {
         conn.ws.send(message);
       }
-    }
+    });
   }
 
   /**
@@ -118,11 +118,11 @@ class ConnectionManager {
 
     const message = JSON.stringify(event);
 
-    for (const conn of connections) {
+    Array.from(connections).forEach((conn) => {
       if (conn.role === "instructor" && conn.ws.readyState === WebSocket.OPEN) {
         conn.ws.send(message);
       }
-    }
+    });
   }
 
   /**
@@ -130,9 +130,9 @@ class ConnectionManager {
    */
   getStats(): { totalClasses: number; totalConnections: number } {
     let totalConnections = 0;
-    for (const connections of this.classConnections.values()) {
+    Array.from(this.classConnections.values()).forEach((connections) => {
       totalConnections += connections.size;
-    }
+    });
     return {
       totalClasses: this.classConnections.size,
       totalConnections,

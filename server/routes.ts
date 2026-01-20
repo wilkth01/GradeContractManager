@@ -195,26 +195,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
 
-      // Get all data needed for analytics
-      const [students, assignments, contracts, studentContracts, allProgress] = await Promise.all([
+      // Get all data needed for analytics in parallel (single query per data type)
+      const [students, assignments, contracts, studentContracts, allProgressFlat] = await Promise.all([
         storage.getEnrolledStudents(classId),
         storage.getAssignmentsByClass(classId),
         storage.getContractsByClass(classId),
         storage.getStudentContractsByClass(classId),
-        Promise.all(
-          (await storage.getEnrolledStudents(classId)).map(student => 
-            storage.getStudentProgress(student.id, classId)
-          )
-        )
+        storage.getStudentProgressForClass(classId), // Single query for all students
       ]);
+
+      // Group progress by student for efficient lookups
+      const progressByStudent = new Map<number, typeof allProgressFlat>();
+      for (const progress of allProgressFlat) {
+        const studentProgress = progressByStudent.get(progress.studentId) || [];
+        studentProgress.push(progress);
+        progressByStudent.set(progress.studentId, studentProgress);
+      }
 
       // Calculate assignment statistics
       const assignmentStats = assignments.map(assignment => {
         const statusBreakdown = { notStarted: 0, inProgress: 0, completed: 0, excellent: 0 };
         let totalProgress = 0;
 
-        students.forEach((student, studentIndex) => {
-          const studentProgress = allProgress[studentIndex];
+        students.forEach((student) => {
+          const studentProgress = progressByStudent.get(student.id) || [];
           const assignmentProgress = studentProgress.find(p => p.assignmentId === assignment.id);
           const status = assignmentProgress?.status ?? AssignmentStatus.NOT_STARTED;
 
@@ -243,8 +247,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Calculate student performance
-      const studentPerformance = students.map((student, studentIndex) => {
-        const studentProgress = allProgress[studentIndex];
+      const studentPerformance = students.map((student) => {
+        const studentProgress = progressByStudent.get(student.id) || [];
         const studentContract = studentContracts.find(sc => sc.studentId === student.id);
 
         const completedAssignments = studentProgress.filter(p => isAssignmentDone(p.status)).length;
@@ -529,16 +533,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const classId = parseInt(req.params.classId);
-    const students = await storage.getEnrolledStudents(classId);
 
     try {
-      // Get progress for all students
-      const progress = await Promise.all(
-        students.map(student => storage.getStudentProgress(student.id, classId))
-      );
-
-      // Flatten the array of progress arrays
-      const allProgress = progress.flat();
+      // Get all progress for the class in a single query
+      const allProgress = await storage.getStudentProgressForClass(classId);
       res.json(allProgress);
     } catch (error) {
       console.error("Error getting student progress:", error);

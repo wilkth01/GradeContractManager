@@ -35,6 +35,7 @@ export interface IStorage {
 
   updateProgress(progress: Omit<AssignmentProgress, "id">): Promise<AssignmentProgress>;
   getStudentProgress(studentId: number, classId: number): Promise<AssignmentProgress[]>;
+  getStudentProgressForClass(classId: number): Promise<AssignmentProgress[]>;
 
   sessionStore: session.Store;
 
@@ -80,8 +81,10 @@ export interface IStorage {
   // Instructor dashboard attendance methods
   getAttendanceForClass(classId: number): Promise<AttendanceRecord[]>;
   getAttendanceForStudentInClass(studentId: number, classId: number): Promise<AttendanceRecord[]>;
-  updateStudentAttendance(studentId: number, classId: number, date: Date, status: 'present' | 'absent' | 'tardy' | 'excused'): Promise<AttendanceRecord>;
-  createStudentAttendance(studentId: number, classId: number, date: Date, status: 'present' | 'absent' | 'tardy' | 'excused'): Promise<AttendanceRecord>;
+  getClassAttendanceByDate(classId: number, date: string): Promise<AttendanceRecord[]>;
+  batchUpsertAttendance(records: { studentId: number; classId: number; date: string; isPresent: boolean; notes?: string }[]): Promise<void>;
+  updateStudentAttendance(studentId: number, classId: number, date: Date, isPresent: boolean): Promise<AttendanceRecord>;
+  createStudentAttendance(studentId: number, classId: number, date: Date, isPresent: boolean): Promise<AttendanceRecord>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -826,15 +829,70 @@ export class DatabaseStorage implements IStorage {
       .orderBy(attendanceRecords.date);
   }
 
-  async updateStudentAttendance(studentId: number, classId: number, date: Date, status: 'present' | 'absent' | 'tardy' | 'excused'): Promise<AttendanceRecord> {
+  async getClassAttendanceByDate(classId: number, date: string): Promise<AttendanceRecord[]> {
+    return db
+      .select()
+      .from(attendanceRecords)
+      .where(
+        and(
+          eq(attendanceRecords.classId, classId),
+          sql`${attendanceRecords.date}::date = ${date}::date`
+        )
+      );
+  }
+
+  async batchUpsertAttendance(records: { studentId: number; classId: number; date: string; isPresent: boolean; notes?: string }[]): Promise<void> {
+    if (records.length === 0) return;
+
+    // Process each record - upsert based on studentId + classId + date
+    for (const record of records) {
+      const dateObj = new Date(record.date);
+
+      // Check if record exists
+      const existing = await db
+        .select()
+        .from(attendanceRecords)
+        .where(
+          and(
+            eq(attendanceRecords.studentId, record.studentId),
+            eq(attendanceRecords.classId, record.classId),
+            sql`${attendanceRecords.date}::date = ${record.date}::date`
+          )
+        )
+        .limit(1);
+
+      if (existing.length > 0) {
+        // Update existing
+        await db
+          .update(attendanceRecords)
+          .set({
+            isPresent: record.isPresent,
+            notes: record.notes || null,
+          })
+          .where(eq(attendanceRecords.id, existing[0].id));
+      } else {
+        // Insert new
+        await db
+          .insert(attendanceRecords)
+          .values({
+            studentId: record.studentId,
+            classId: record.classId,
+            date: dateObj,
+            isPresent: record.isPresent,
+            notes: record.notes || null,
+          });
+      }
+    }
+  }
+
+  async updateStudentAttendance(studentId: number, classId: number, date: Date, isPresent: boolean): Promise<AttendanceRecord> {
     const [updated] = await db
       .update(attendanceRecords)
-      .set({ status })
+      .set({ isPresent })
       .where(
         and(
           eq(attendanceRecords.studentId, studentId),
           eq(attendanceRecords.classId, classId),
-          // Use sql function for date comparison to ignore time component
           sql`${attendanceRecords.date}::date = ${date}::date`
         )
       )
@@ -842,14 +900,14 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async createStudentAttendance(studentId: number, classId: number, date: Date, status: 'present' | 'absent' | 'tardy' | 'excused'): Promise<AttendanceRecord> {
+  async createStudentAttendance(studentId: number, classId: number, date: Date, isPresent: boolean): Promise<AttendanceRecord> {
     const [created] = await db
       .insert(attendanceRecords)
       .values({
         studentId,
         classId,
         date,
-        status,
+        isPresent,
       })
       .returning();
     return created;

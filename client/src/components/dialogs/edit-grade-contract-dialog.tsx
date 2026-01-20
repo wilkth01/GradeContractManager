@@ -44,9 +44,19 @@ const editGradeContractSchema = z.object({
   })),
   requiredEngagementIntentions: z.number().default(0),
   maxAbsences: z.number().default(0),
+  assignmentComments: z.record(z.string(), z.string()).default({}),
 });
 
 type FormData = z.infer<typeof editGradeContractSchema>;
+
+// Type for the API payload (doesn't include assignmentComments which is only for form state)
+type ContractUpdatePayload = {
+  grade: "A" | "B" | "C";
+  requiredEngagementIntentions: number;
+  maxAbsences: number;
+  assignments: { id: number; comments?: string }[];
+  version: number;
+};
 
 export function EditGradeContractDialog({ 
   classId,
@@ -64,6 +74,14 @@ export function EditGradeContractDialog({
     contract.assignments.map(a => a.id)
   );
 
+  // Build initial comments from existing contract assignments
+  const initialComments: Record<string, string> = {};
+  contract.assignments.forEach(a => {
+    if (a.comments) {
+      initialComments[String(a.id)] = a.comments;
+    }
+  });
+
   const form = useForm<FormData>({
     resolver: zodResolver(editGradeContractSchema),
     defaultValues: {
@@ -71,18 +89,16 @@ export function EditGradeContractDialog({
       assignments: contract.assignments,
       requiredEngagementIntentions: contract.requiredEngagementIntentions || 0,
       maxAbsences: contract.maxAbsences || 0,
+      assignmentComments: initialComments,
     },
   });
 
   const updateContractMutation = useMutation({
-    mutationFn: async (data: FormData) => {
+    mutationFn: async (data: ContractUpdatePayload) => {
       const res = await apiRequest(
         "PATCH",
         `/api/classes/${classId}/contracts/${contract.id}`,
-        {
-          ...data,
-          version: contract.version + 1,
-        }
+        data
       );
       return res.json();
     },
@@ -114,9 +130,10 @@ export function EditGradeContractDialog({
     // Create assignments array with selected assignments and their comments
     const assignmentsWithComments = selectedAssignments.map(id => {
       const existingAssignment = contract.assignments.find(a => a.id === id);
+      const comment = values.assignmentComments?.[String(id)] || existingAssignment?.comments;
       return {
         id,
-        comments: form.getValues(`assignmentComments.${id}`) || existingAssignment?.comments,
+        comments: comment,
       };
     });
 
@@ -233,35 +250,35 @@ export function EditGradeContractDialog({
               <div className="border rounded-lg p-4 space-y-4">
                 {assignments.map((assignment) => {
                   const existingAssignment = contract.assignments.find(a => a.id === assignment.id);
+                  const commentKey = String(assignment.id);
                   return (
                     <div key={assignment.id} className="space-y-2">
                       <div className="flex items-center space-x-2">
                         <Checkbox
                           checked={selectedAssignments.includes(assignment.id)}
-                          onCheckedChange={(checked) => 
+                          onCheckedChange={(checked) =>
                             handleCheckboxChange(assignment.id, checked as boolean)
                           }
                         />
                         <label className="text-sm font-medium">{assignment.name}</label>
                       </div>
                       {selectedAssignments.includes(assignment.id) && (
-                        <FormField
-                          control={form.control}
-                          name={`assignmentComments.${assignment.id}`}
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormControl>
-                                <Textarea
-                                  placeholder="Add optional requirements or notes for this assignment"
-                                  className="h-20"
-                                  defaultValue={existingAssignment?.comments}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                        <FormItem>
+                          <FormControl>
+                            <Textarea
+                              placeholder="Add optional requirements or notes for this assignment"
+                              className="h-20"
+                              defaultValue={existingAssignment?.comments || ""}
+                              onChange={(e) => {
+                                const currentComments = form.getValues("assignmentComments") || {};
+                                form.setValue("assignmentComments", {
+                                  ...currentComments,
+                                  [commentKey]: e.target.value,
+                                });
+                              }}
+                            />
+                          </FormControl>
+                        </FormItem>
                       )}
                     </div>
                   );

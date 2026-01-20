@@ -346,7 +346,6 @@ export default function ClassManagement() {
 
   const getAssignmentStatus = (assignment: Assignment, progress?: AssignmentProgress) => {
     if (!progress) {
-      if (assignment.scoringType === "attendance") return "good-standing";
       return "not-submitted";
     }
 
@@ -356,13 +355,8 @@ export default function ClassManagement() {
         case AssignmentStatus.IN_PROGRESS: return "in-progress";
         default: return "not-submitted";
       }
-    } else if (assignment.scoringType === "attendance") {
-      const currentAbsences = progress.numericGrade || 0;
-      const maxAbsences = assignment.maxAbsences || 0;
-      if (currentAbsences > maxAbsences) return "over-limit";
-      if (currentAbsences === maxAbsences) return "at-limit";
-      return "good-standing";
     } else {
+      // Numeric scoring type
       if (!progress.numericGrade) return "not-submitted";
       return "completed"; // For numeric grades, we always show the score
     }

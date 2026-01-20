@@ -367,7 +367,7 @@ export default function StudentEngagement() {
     enabled: !isNaN(parsedClassId) && !!user,
   });
 
-  const currentWeek = getCurrentWeekNumber(classData?.semesterStartDate);
+  const currentWeek = getCurrentWeekNumber(classData?.semesterStartDate ?? undefined);
 
   const handleUpdate = () => {
     queryClient.invalidateQueries({
@@ -457,7 +457,7 @@ export default function StudentEngagement() {
                   intention={intentionsByWeek[currentWeek]}
                   isCurrentWeek={true}
                   onUpdate={handleUpdate}
-                  semesterStartDate={classData?.semesterStartDate}
+                  semesterStartDate={classData?.semesterStartDate ?? undefined}
                 />
               </CardContent>
             </Card>
@@ -487,7 +487,7 @@ export default function StudentEngagement() {
                   intention={intentionsByWeek[weekNumber]}
                   isCurrentWeek={weekNumber === currentWeek}
                   onUpdate={handleUpdate}
-                  semesterStartDate={classData?.semesterStartDate}
+                  semesterStartDate={classData?.semesterStartDate ?? undefined}
                 />
               ))}
             </div>
