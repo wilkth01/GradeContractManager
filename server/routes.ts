@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { setupAuth, hashPassword } from "./auth";
+import { hashPassword } from "./auth";
 import { storage } from "./storage";
 import { auditService } from "./audit";
 import { connectionManager, createProgressUpdateEvent } from "./websocket";
@@ -8,7 +8,7 @@ import { insertClassSchema, updateClassSchema, insertAssignmentSchema, insertStu
 import { AssignmentStatus, isAssignmentDone } from "@shared/constants";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  setupAuth(app);
+  // NOTE: setupAuth() is now called in server/index.ts before route registration
 
   // NOTE: Class and Assignment routes have been moved to modular route files:
   // - server/routes/classes.ts

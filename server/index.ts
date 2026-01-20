@@ -5,7 +5,7 @@ import { registerRoutes } from "./routes";
 import { registerRouteModules } from "./routes/index";
 import { setupVite, serveStatic, log } from "./vite";
 import { setupWebSocket } from "./websocket";
-import { getSessionConfig } from "./auth";
+import { getSessionConfig, setupAuth } from "./auth";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
 import { AppError, ValidationError } from "./errors";
@@ -79,6 +79,9 @@ app.get("/api/health", (_req, res) => {
 });
 
 (async () => {
+  // Set up authentication (must be before any routes that use requireAuth)
+  setupAuth(app);
+
   // Register modular routes first (classes, assignments, etc.)
   registerRouteModules(app);
 
