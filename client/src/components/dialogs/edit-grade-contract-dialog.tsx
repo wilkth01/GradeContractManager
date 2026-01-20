@@ -45,9 +45,14 @@ const editGradeContractSchema = z.object({
   requiredEngagementIntentions: z.number().default(0),
   maxAbsences: z.number().default(0),
   assignmentComments: z.record(z.string(), z.string()).default({}),
+  categoryRequirements: z.array(z.object({
+    category: z.string(),
+    required: z.number().min(1),
+  })).optional(),
 });
 
 type FormData = z.infer<typeof editGradeContractSchema>;
+type CategoryRequirement = { category: string; required: number };
 
 // Type for the API payload (doesn't include assignmentComments which is only for form state)
 type ContractUpdatePayload = {
@@ -55,16 +60,17 @@ type ContractUpdatePayload = {
   requiredEngagementIntentions: number;
   maxAbsences: number;
   assignments: { id: number; comments?: string }[];
+  categoryRequirements?: { category: string; required: number }[];
   version: number;
 };
 
-export function EditGradeContractDialog({ 
+export function EditGradeContractDialog({
   classId,
   contract,
-  assignments 
-}: { 
+  assignments
+}: {
   classId: number;
-  contract: GradeContract;
+  contract: GradeContract & { categoryRequirements?: CategoryRequirement[] | null };
   assignments: Assignment[];
 }) {
   const [open, setOpen] = useState(false);
@@ -82,6 +88,31 @@ export function EditGradeContractDialog({
     }
   });
 
+  // Build initial category requirements from existing contract
+  const initialCategoryReqs: Record<string, number | null> = {};
+  (contract.categoryRequirements || []).forEach(cr => {
+    initialCategoryReqs[cr.category] = cr.required;
+  });
+  const [categoryRequirements, setCategoryRequirements] = useState<Record<string, number | null>>(initialCategoryReqs);
+
+  // Group assignments by module group
+  const assignmentsByCategory = assignments.reduce((acc, assignment) => {
+    const category = assignment.moduleGroup || "Uncategorized";
+    if (!acc[category]) acc[category] = [];
+    acc[category].push(assignment);
+    return acc;
+  }, {} as Record<string, Assignment[]>);
+
+  // Get categories that have at least one selected assignment
+  const selectedCategories = Object.entries(assignmentsByCategory)
+    .filter(([_, categoryAssignments]) =>
+      categoryAssignments.some(a => selectedAssignments.includes(a.id))
+    )
+    .map(([category, categoryAssignments]) => ({
+      category,
+      totalSelected: categoryAssignments.filter(a => selectedAssignments.includes(a.id)).length
+    }));
+
   const form = useForm<FormData>({
     resolver: zodResolver(editGradeContractSchema),
     defaultValues: {
@@ -90,6 +121,7 @@ export function EditGradeContractDialog({
       requiredEngagementIntentions: contract.requiredEngagementIntentions || 0,
       maxAbsences: contract.maxAbsences || 0,
       assignmentComments: initialComments,
+      categoryRequirements: contract.categoryRequirements || [],
     },
   });
 
@@ -113,6 +145,7 @@ export function EditGradeContractDialog({
       setOpen(false);
       form.reset();
       setSelectedAssignments([]);
+      setCategoryRequirements({});
     },
     onError: (error: Error) => {
       toast({
@@ -137,11 +170,17 @@ export function EditGradeContractDialog({
       };
     });
 
-    const formData = {
+    // Build category requirements array from state
+    const categoryReqs: CategoryRequirement[] = Object.entries(categoryRequirements)
+      .filter(([_, required]) => required !== null && required > 0)
+      .map(([category, required]) => ({ category, required: required as number }));
+
+    const formData: ContractUpdatePayload = {
       grade: values.grade,
       requiredEngagementIntentions: values.requiredEngagementIntentions,
       maxAbsences: values.maxAbsences,
       assignments: assignmentsWithComments,
+      categoryRequirements: categoryReqs.length > 0 ? categoryReqs : undefined,
       version: contract.version + 1,
     };
 
@@ -248,43 +287,89 @@ export function EditGradeContractDialog({
             <div className="space-y-4">
               <FormLabel>Required Assignments</FormLabel>
               <div className="border rounded-lg p-4 space-y-4">
-                {assignments.map((assignment) => {
-                  const existingAssignment = contract.assignments.find(a => a.id === assignment.id);
-                  const commentKey = String(assignment.id);
-                  return (
-                    <div key={assignment.id} className="space-y-2">
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          checked={selectedAssignments.includes(assignment.id)}
-                          onCheckedChange={(checked) =>
-                            handleCheckboxChange(assignment.id, checked as boolean)
-                          }
-                        />
-                        <label className="text-sm font-medium">{assignment.name}</label>
-                      </div>
-                      {selectedAssignments.includes(assignment.id) && (
-                        <FormItem>
-                          <FormControl>
-                            <Textarea
-                              placeholder="Add optional requirements or notes for this assignment"
-                              className="h-20"
-                              defaultValue={existingAssignment?.comments || ""}
-                              onChange={(e) => {
-                                const currentComments = form.getValues("assignmentComments") || {};
-                                form.setValue("assignmentComments", {
-                                  ...currentComments,
-                                  [commentKey]: e.target.value,
-                                });
-                              }}
+                {Object.entries(assignmentsByCategory).map(([category, categoryAssignments]) => (
+                  <div key={category} className="space-y-2">
+                    <p className="text-sm font-semibold text-muted-foreground">{category}</p>
+                    {categoryAssignments.map((assignment) => {
+                      const existingAssignment = contract.assignments.find(a => a.id === assignment.id);
+                      const commentKey = String(assignment.id);
+                      return (
+                        <div key={assignment.id} className="space-y-2 ml-4">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              checked={selectedAssignments.includes(assignment.id)}
+                              onCheckedChange={(checked) =>
+                                handleCheckboxChange(assignment.id, checked as boolean)
+                              }
                             />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    </div>
-                  );
-                })}
+                            <label className="text-sm font-medium">{assignment.name}</label>
+                          </div>
+                          {selectedAssignments.includes(assignment.id) && (
+                            <FormItem>
+                              <FormControl>
+                                <Textarea
+                                  placeholder="Add optional requirements or notes for this assignment"
+                                  className="h-20"
+                                  defaultValue={existingAssignment?.comments || ""}
+                                  onChange={(e) => {
+                                    const currentComments = form.getValues("assignmentComments") || {};
+                                    form.setValue("assignmentComments", {
+                                      ...currentComments,
+                                      [commentKey]: e.target.value,
+                                    });
+                                  }}
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
             </div>
+
+            {/* Category Requirements Section */}
+            {selectedCategories.length > 0 && (
+              <div className="space-y-4 border-t pt-4">
+                <div>
+                  <FormLabel>Category Completion Requirements</FormLabel>
+                  <p className="text-sm text-muted-foreground">
+                    Optionally specify how many assignments must be completed within each category.
+                    Leave blank to require all selected assignments in that category.
+                  </p>
+                </div>
+                {selectedCategories.map(({ category, totalSelected }) => (
+                  <div key={category} className="flex items-center gap-4">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">{category}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {totalSelected} assignment{totalSelected !== 1 ? "s" : ""} selected
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min="1"
+                        max={totalSelected}
+                        placeholder="All"
+                        className="w-20"
+                        value={categoryRequirements[category] ?? ""}
+                        onChange={(e) => {
+                          const value = e.target.value ? parseInt(e.target.value) : null;
+                          setCategoryRequirements(prev => ({
+                            ...prev,
+                            [category]: value
+                          }));
+                        }}
+                      />
+                      <span className="text-sm text-muted-foreground">required</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <Button
               type="submit"
               className="w-full"

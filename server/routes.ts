@@ -159,6 +159,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       assignments: req.body.assignments,
       requiredEngagementIntentions: req.body.requiredEngagementIntentions || 0,
       maxAbsences: req.body.maxAbsences || 0,
+      categoryRequirements: req.body.categoryRequirements || null,
     });
     res.status(201).json(contract);
   });
@@ -196,6 +197,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       assignments: req.body.assignments,
       requiredEngagementIntentions: req.body.requiredEngagementIntentions || 0,
       maxAbsences: req.body.maxAbsences || 0,
+      categoryRequirements: req.body.categoryRequirements || null,
     });
 
     res.json(updatedContract);

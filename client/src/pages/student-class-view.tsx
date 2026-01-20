@@ -2,6 +2,9 @@ import { useAuth } from "@/hooks/use-auth";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Class, Assignment, GradeContract, AssignmentProgress } from "@shared/schema";
+
+type CategoryRequirement = { category: string; required: number };
+type GradeContractWithCategories = GradeContract & { categoryRequirements?: CategoryRequirement[] | null };
 import { AssignmentStatus } from "@shared/constants";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,7 +46,7 @@ export default function StudentClassView() {
   });
 
   // Fetch available contracts
-  const { data: contracts, isLoading: isLoadingContracts } = useQuery<GradeContract[]>({
+  const { data: contracts, isLoading: isLoadingContracts } = useQuery<GradeContractWithCategories[]>({
     queryKey: [`/api/classes/${parsedClassId}/contracts`],
     enabled: !isNaN(parsedClassId),
   });
@@ -356,10 +359,26 @@ export default function StudentClassView() {
                           );
                           const totalInGroup = groupAssignments.length;
 
+                          // Check if there's a category requirement for this group
+                          const categoryReq = currentContract.categoryRequirements?.find(cr => cr.category === group);
+                          const requiredCount = categoryReq?.required || totalInGroup;
+                          const categoryMet = groupStats.completed >= requiredCount;
+
                           return (
                           <div key={group} className="space-y-4" role="region" aria-labelledby={`group-${group}`}>
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                              <h4 id={`group-${group}`} className="font-bold text-xl text-[#0072BC]">{group}</h4>
+                              <div className="flex items-center gap-2">
+                                <h4 id={`group-${group}`} className="font-bold text-xl text-[#0072BC]">{group}</h4>
+                                {categoryReq && (
+                                  <span className={`text-sm px-2 py-0.5 rounded-full ${
+                                    categoryMet
+                                      ? "bg-green-100 text-green-700"
+                                      : "bg-amber-100 text-amber-700"
+                                  }`}>
+                                    {groupStats.completed}/{requiredCount} required
+                                  </span>
+                                )}
+                              </div>
                               <div className="flex items-center gap-4 text-sm">
                                 <div className="flex items-center gap-1.5">
                                   <CheckCircle2 className="h-4 w-4 text-green-600" />
@@ -383,11 +402,11 @@ export default function StudentClassView() {
                               <div className="flex h-2.5 rounded-full overflow-hidden">
                                 <div
                                   className="bg-green-600 h-2.5"
-                                  style={{ width: `${(groupStats.completed / totalInGroup) * 100}%` }}
+                                  style={{ width: `${(groupStats.completed / (categoryReq ? requiredCount : totalInGroup)) * 100}%` }}
                                 />
                                 <div
                                   className="bg-yellow-500 h-2.5"
-                                  style={{ width: `${(groupStats.inProgress / totalInGroup) * 100}%` }}
+                                  style={{ width: `${(groupStats.inProgress / (categoryReq ? requiredCount : totalInGroup)) * 100}%` }}
                                 />
                               </div>
                             </div>

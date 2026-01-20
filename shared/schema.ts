@@ -39,6 +39,7 @@ export const gradeContracts = pgTable("grade_contracts", {
   assignments: json("assignments").notNull().$type<{ id: number; comments?: string }[]>(),
   requiredEngagementIntentions: integer("required_engagement_intentions").default(0),
   maxAbsences: integer("max_absences").default(0),
+  categoryRequirements: json("category_requirements").$type<{ category: string; required: number }[]>(),
 });
 
 export const studentContracts = pgTable("student_contracts", {
@@ -125,10 +126,16 @@ const assignmentRequirementSchema = z.object({
   comments: z.string().optional(),
 });
 
+const categoryRequirementSchema = z.object({
+  category: z.string(),
+  required: z.number().min(1),
+});
+
 export const insertGradeContractSchema = createInsertSchema(gradeContracts).extend({
   assignments: z.array(assignmentRequirementSchema),
   requiredEngagementIntentions: z.number().default(0),
   maxAbsences: z.number().default(0),
+  categoryRequirements: z.array(categoryRequirementSchema).optional(),
 });
 
 export const insertStudentInvitationSchema = createInsertSchema(studentInvitations).pick({
