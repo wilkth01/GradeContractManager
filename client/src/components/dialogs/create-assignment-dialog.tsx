@@ -54,23 +54,22 @@ export function CreateAssignmentDialog({ classId }: { classId: number }) {
         throw new Error("Please add at least one assignment with a name");
       }
 
-      // Create all assignments in parallel
-      const results = await Promise.all(
-        validAssignments.map(async (assignment) => {
-          const res = await apiRequest(
-            "POST",
-            `/api/classes/${classId}/assignments`,
-            {
-              name: assignment.name,
-              moduleGroup: assignment.moduleGroup || null,
-              scoringType: assignment.scoringType,
-              dueDate: assignment.dueDate || null,
-              classId,
-            }
-          );
-          return res.json();
-        })
-      );
+      // Create assignments sequentially to preserve order
+      const results = [];
+      for (const assignment of validAssignments) {
+        const res = await apiRequest(
+          "POST",
+          `/api/classes/${classId}/assignments`,
+          {
+            name: assignment.name,
+            moduleGroup: assignment.moduleGroup || null,
+            scoringType: assignment.scoringType,
+            dueDate: assignment.dueDate || null,
+            classId,
+          }
+        );
+        results.push(await res.json());
+      }
 
       return results;
     },
