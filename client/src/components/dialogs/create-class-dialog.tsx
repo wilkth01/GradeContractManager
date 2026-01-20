@@ -36,12 +36,15 @@ export function CreateClassDialog() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // Default to current date in YYYY-MM-DD format
+  const today = new Date().toISOString().split('T')[0];
+
   const form = useForm<FormData>({
     resolver: zodResolver(insertClassSchema),
     defaultValues: {
       name: "",
       description: "",
-      semesterStartDate: "2025-08-25",
+      semesterStartDate: today,
     },
   });
 
