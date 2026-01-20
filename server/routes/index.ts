@@ -5,18 +5,18 @@ import auditRouter from "./audit";
 import canvasImportRouter from "./canvas-import";
 
 /**
- * IMPORTANT: This module is NOT currently in use.
+ * Modular route registration for the Contract Grade Tracker API.
  *
- * All routes are currently defined in the monolithic routes.ts file.
- * These modular route files were created as part of an incomplete refactoring effort.
+ * These routes are registered BEFORE the monolithic routes.ts file,
+ * so they take precedence for the endpoints they handle.
  *
- * DO NOT call registerRouteModules() without first removing duplicate routes from routes.ts,
- * or you will get conflicting route handlers.
+ * Currently extracted modules:
+ * - classes.ts: Class CRUD, archive/unarchive, delete
+ * - assignments.ts: Assignment CRUD
+ * - audit.ts: Audit logging
+ * - canvas-import.ts: Canvas gradebook import
  *
- * Future refactoring plan:
- * 1. Extract remaining routes from routes.ts into modules
- * 2. Remove duplicates from routes.ts
- * 3. Call registerRouteModules() from server/index.ts
+ * Future refactoring: Extract remaining routes from routes.ts into modules.
  */
 export function registerRouteModules(app: Express): void {
   // Register route modules

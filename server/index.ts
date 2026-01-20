@@ -2,6 +2,7 @@ import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
+import { registerRouteModules } from "./routes/index";
 import { setupVite, serveStatic, log } from "./vite";
 import { setupWebSocket } from "./websocket";
 import { getSessionConfig } from "./auth";
@@ -78,6 +79,10 @@ app.get("/api/health", (_req, res) => {
 });
 
 (async () => {
+  // Register modular routes first (classes, assignments, etc.)
+  registerRouteModules(app);
+
+  // Register remaining routes from monolithic routes.ts
   const server = await registerRoutes(app);
 
   // Set up WebSocket for real-time updates

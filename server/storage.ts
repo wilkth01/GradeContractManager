@@ -18,6 +18,8 @@ export interface IStorage {
   getClass(id: number): Promise<Class | undefined>;
   getClassesByInstructor(instructorId: number): Promise<Class[]>;
   archiveClass(id: number): Promise<void>;
+  unarchiveClass(id: number): Promise<void>;
+  deleteClass(id: number): Promise<void>;
 
   createAssignment(assignment: Omit<Assignment, "id" | "displayOrder">): Promise<Assignment>;
   getAssignmentsByClass(classId: number): Promise<Assignment[]>;
@@ -131,6 +133,45 @@ export class DatabaseStorage implements IStorage {
 
   async archiveClass(id: number): Promise<void> {
     await db.update(classes).set({ isArchived: true }).where(eq(classes.id, id));
+  }
+
+  async unarchiveClass(id: number): Promise<void> {
+    await db.update(classes).set({ isArchived: false }).where(eq(classes.id, id));
+  }
+
+  async deleteClass(id: number): Promise<void> {
+    // Delete in order to respect foreign key constraints
+    // First delete all related data
+
+    // Get all assignments for this class
+    const classAssignments = await this.getAssignmentsByClass(id);
+    const assignmentIds = classAssignments.map(a => a.id);
+
+    // Delete assignment progress for all assignments in this class
+    if (assignmentIds.length > 0) {
+      await db.delete(assignmentProgress).where(inArray(assignmentProgress.assignmentId, assignmentIds));
+    }
+
+    // Delete all assignments for this class
+    await db.delete(assignments).where(eq(assignments.classId, id));
+
+    // Delete all grade contracts for this class
+    await db.delete(gradeContracts).where(eq(gradeContracts.classId, id));
+
+    // Delete all student contracts for this class
+    await db.delete(studentContracts).where(eq(studentContracts.classId, id));
+
+    // Delete all student invitations for this class
+    await db.delete(studentInvitations).where(eq(studentInvitations.classId, id));
+
+    // Delete all engagement intentions for this class
+    await db.delete(engagementIntentions).where(eq(engagementIntentions.classId, id));
+
+    // Delete all attendance records for this class
+    await db.delete(attendanceRecords).where(eq(attendanceRecords.classId, id));
+
+    // Finally delete the class itself
+    await db.delete(classes).where(eq(classes.id, id));
   }
 
   async createAssignment(assignment: Omit<Assignment, "id" | "displayOrder">): Promise<Assignment> {

@@ -54,7 +54,7 @@ router.get("/api/classes", requireAuth, async (req, res) => {
   }
 });
 
-// Archive a class
+// Archive a class (make inactive)
 router.post("/api/classes/:id/archive", requireInstructor, async (req, res) => {
   const classId = parseInt(req.params.id);
   if (isNaN(classId)) {
@@ -67,7 +67,44 @@ router.post("/api/classes/:id/archive", requireInstructor, async (req, res) => {
   }
 
   await storage.archiveClass(classId);
-  res.sendStatus(200);
+  res.json({ message: "Class archived successfully", isArchived: true });
+});
+
+// Unarchive a class (make active)
+router.post("/api/classes/:id/unarchive", requireInstructor, async (req, res) => {
+  const classId = parseInt(req.params.id);
+  if (isNaN(classId)) {
+    return res.status(400).json({ message: "Invalid class ID" });
+  }
+
+  const cls = await storage.getClass(classId);
+  if (!cls || cls.instructorId !== req.user!.id) {
+    return res.sendStatus(403);
+  }
+
+  await storage.unarchiveClass(classId);
+  res.json({ message: "Class activated successfully", isArchived: false });
+});
+
+// Delete a class permanently
+router.delete("/api/classes/:id", requireInstructor, async (req, res) => {
+  const classId = parseInt(req.params.id);
+  if (isNaN(classId)) {
+    return res.status(400).json({ message: "Invalid class ID" });
+  }
+
+  const cls = await storage.getClass(classId);
+  if (!cls || cls.instructorId !== req.user!.id) {
+    return res.sendStatus(403);
+  }
+
+  try {
+    await storage.deleteClass(classId);
+    res.json({ message: "Class deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting class:", error);
+    res.status(500).json({ message: "Failed to delete class. It may have associated data." });
+  }
 });
 
 // Update a class
