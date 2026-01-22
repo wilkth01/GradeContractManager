@@ -41,6 +41,7 @@ const editGradeContractSchema = z.object({
   assignments: z.array(z.object({
     id: z.number(),
     comments: z.string().optional(),
+    minPoints: z.number().min(0).optional(),
   })),
   requiredEngagementIntentions: z.number().default(0),
   maxAbsences: z.number().default(0),
@@ -53,13 +54,14 @@ const editGradeContractSchema = z.object({
 
 type FormData = z.infer<typeof editGradeContractSchema>;
 type CategoryRequirement = { category: string; required: number };
+type AssignmentMinPoints = Record<number, number | undefined>;
 
 // Type for the API payload (doesn't include assignmentComments which is only for form state)
 type ContractUpdatePayload = {
   grade: "A" | "B" | "C";
   requiredEngagementIntentions: number;
   maxAbsences: number;
-  assignments: { id: number; comments?: string }[];
+  assignments: { id: number; comments?: string; minPoints?: number }[];
   categoryRequirements?: { category: string; required: number }[];
   version: number;
 };
@@ -94,6 +96,15 @@ export function EditGradeContractDialog({
     initialCategoryReqs[cr.category] = cr.required;
   });
   const [categoryRequirements, setCategoryRequirements] = useState<Record<string, number | null>>(initialCategoryReqs);
+
+  // Build initial minPoints from existing contract assignments
+  const initialMinPoints: AssignmentMinPoints = {};
+  contract.assignments.forEach(a => {
+    if (a.minPoints !== undefined) {
+      initialMinPoints[a.id] = a.minPoints;
+    }
+  });
+  const [minPointsRequirements, setMinPointsRequirements] = useState<AssignmentMinPoints>(initialMinPoints);
 
   // Group assignments by module group
   const assignmentsByCategory = assignments.reduce((acc, assignment) => {
@@ -146,6 +157,7 @@ export function EditGradeContractDialog({
       form.reset();
       setSelectedAssignments([]);
       setCategoryRequirements({});
+      setMinPointsRequirements({});
     },
     onError: (error: Error) => {
       toast({
@@ -160,13 +172,15 @@ export function EditGradeContractDialog({
     e.preventDefault();
     const values = form.getValues();
 
-    // Create assignments array with selected assignments and their comments
+    // Create assignments array with selected assignments, comments, and minPoints
     const assignmentsWithComments = selectedAssignments.map(id => {
       const existingAssignment = contract.assignments.find(a => a.id === id);
       const comment = values.assignmentComments?.[String(id)] || existingAssignment?.comments;
+      const minPoints = minPointsRequirements[id];
       return {
         id,
         comments: comment,
+        minPoints,
       };
     });
 
@@ -192,11 +206,18 @@ export function EditGradeContractDialog({
   };
 
   const handleCheckboxChange = (assignmentId: number, checked: boolean) => {
-    setSelectedAssignments(prev => 
-      checked 
+    setSelectedAssignments(prev =>
+      checked
         ? [...prev, assignmentId]
         : prev.filter(id => id !== assignmentId)
     );
+    // Clear minPoints when unchecking
+    if (!checked) {
+      setMinPointsRequirements(prev => {
+        const { [assignmentId]: _, ...rest } = prev;
+        return rest;
+      });
+    }
   };
 
   return (
@@ -303,24 +324,49 @@ export function EditGradeContractDialog({
                               }
                             />
                             <label className="text-sm font-medium">{assignment.name}</label>
+                            {assignment.scoringType === "numeric" && (
+                              <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Points</span>
+                            )}
                           </div>
                           {selectedAssignments.includes(assignment.id) && (
-                            <FormItem>
-                              <FormControl>
-                                <Textarea
-                                  placeholder="Add optional requirements or notes for this assignment"
-                                  className="h-20"
-                                  defaultValue={existingAssignment?.comments || ""}
-                                  onChange={(e) => {
-                                    const currentComments = form.getValues("assignmentComments") || {};
-                                    form.setValue("assignmentComments", {
-                                      ...currentComments,
-                                      [commentKey]: e.target.value,
-                                    });
-                                  }}
-                                />
-                              </FormControl>
-                            </FormItem>
+                            <div className="space-y-2 ml-6">
+                              {assignment.scoringType === "numeric" && (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.1"
+                                    placeholder="Min points"
+                                    className="w-28"
+                                    value={minPointsRequirements[assignment.id] ?? ""}
+                                    onChange={(e) => {
+                                      const value = e.target.value ? parseFloat(e.target.value) : undefined;
+                                      setMinPointsRequirements(prev => ({
+                                        ...prev,
+                                        [assignment.id]: value
+                                      }));
+                                    }}
+                                  />
+                                  <span className="text-xs text-muted-foreground">minimum points required</span>
+                                </div>
+                              )}
+                              <FormItem>
+                                <FormControl>
+                                  <Textarea
+                                    placeholder="Add optional requirements or notes for this assignment"
+                                    className="h-20"
+                                    defaultValue={existingAssignment?.comments || ""}
+                                    onChange={(e) => {
+                                      const currentComments = form.getValues("assignmentComments") || {};
+                                      form.setValue("assignmentComments", {
+                                        ...currentComments,
+                                        [commentKey]: e.target.value,
+                                      });
+                                    }}
+                                  />
+                                </FormControl>
+                              </FormItem>
+                            </div>
                           )}
                         </div>
                       );

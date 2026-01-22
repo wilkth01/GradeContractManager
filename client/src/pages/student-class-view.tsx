@@ -343,7 +343,7 @@ export default function StudentClassView() {
                               ...groups,
                               [group]: [...(groups[group] || []), { assignment, req }]
                             };
-                          }, {} as Record<string, { assignment: Assignment; req: { id: number; comments?: string } }[]>)
+                          }, {} as Record<string, { assignment: Assignment; req: { id: number; comments?: string; minPoints?: number } }[]>)
                         ).map(([group, groupAssignments]) => {
                           // Calculate group progress statistics
                           const groupStats = groupAssignments.reduce(
@@ -488,14 +488,60 @@ export default function StudentClassView() {
                                           {assignment.scoringType === "status" ? (
                                             <div className={`px-3 py-2 rounded-md border text-base font-semibold ${
                                               status === "completed" ? "status-completed" :
-                                                status === "in-progress" ? "status-in-progress" : 
+                                                status === "in-progress" ? "status-in-progress" :
                                                   "status-not-submitted"
                                             }`}>
                                               {statusLabel}
                                             </div>
                                           ) : (
-                                            <div className="px-3 py-2 rounded-md bg-gray-50 border text-base font-semibold">
-                                              Score: {progress?.numericGrade ? parseFloat(progress.numericGrade).toFixed(1) : "Not submitted"}
+                                            <div className="space-y-2 w-full">
+                                              {(() => {
+                                                const currentPoints = progress?.numericGrade ? parseFloat(progress.numericGrade) : 0;
+                                                const minRequired = req.minPoints;
+                                                const meetsRequirement = minRequired ? currentPoints >= minRequired : true;
+
+                                                return (
+                                                  <>
+                                                    <div className="flex items-center justify-between">
+                                                      <div className={`px-3 py-2 rounded-md border text-base font-semibold ${
+                                                        !progress?.numericGrade ? "bg-gray-50" :
+                                                          meetsRequirement ? "bg-green-50 border-green-200 text-green-700" :
+                                                            "bg-amber-50 border-amber-200 text-amber-700"
+                                                      }`}>
+                                                        Score: {progress?.numericGrade ? currentPoints.toFixed(1) : "Not submitted"}
+                                                        {minRequired && progress?.numericGrade && (
+                                                          <span className="ml-1 text-sm">
+                                                            / {minRequired} required
+                                                          </span>
+                                                        )}
+                                                      </div>
+                                                      {minRequired && progress?.numericGrade && (
+                                                        meetsRequirement ? (
+                                                          <CheckCircle2 className="h-6 w-6 text-green-600" />
+                                                        ) : (
+                                                          <AlertTriangle className="h-6 w-6 text-amber-600" />
+                                                        )
+                                                      )}
+                                                    </div>
+                                                    {minRequired && (
+                                                      <div className="space-y-1">
+                                                        <div className="flex justify-between text-xs text-muted-foreground">
+                                                          <span>Progress toward {minRequired} points</span>
+                                                          <span>{Math.min(100, Math.round((currentPoints / minRequired) * 100))}%</span>
+                                                        </div>
+                                                        <div className="w-full bg-gray-200 rounded-full h-2">
+                                                          <div
+                                                            className={`h-2 rounded-full transition-all ${
+                                                              meetsRequirement ? "bg-green-600" : "bg-amber-500"
+                                                            }`}
+                                                            style={{ width: `${Math.min(100, (currentPoints / minRequired) * 100)}%` }}
+                                                          />
+                                                        </div>
+                                                      </div>
+                                                    )}
+                                                  </>
+                                                );
+                                              })()}
                                             </div>
                                           )}
                                         </div>

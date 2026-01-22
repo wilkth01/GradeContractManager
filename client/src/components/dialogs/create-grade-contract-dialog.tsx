@@ -40,6 +40,7 @@ const createGradeContractSchema = z.object({
   assignments: z.array(z.object({
     id: z.number(),
     comments: z.string().optional(),
+    minPoints: z.number().min(0).optional(),
   })),
   requiredEngagementIntentions: z.number().default(0),
   maxAbsences: z.number().default(0),
@@ -51,6 +52,7 @@ const createGradeContractSchema = z.object({
 
 type FormData = z.infer<typeof createGradeContractSchema>;
 type CategoryRequirement = { category: string; required: number };
+type AssignmentMinPoints = Record<number, number | undefined>;
 
 export function CreateGradeContractDialog({
   classId,
@@ -64,6 +66,7 @@ export function CreateGradeContractDialog({
   const queryClient = useQueryClient();
   const [selectedAssignments, setSelectedAssignments] = useState<number[]>([]);
   const [categoryRequirements, setCategoryRequirements] = useState<Record<string, number | null>>({});
+  const [minPointsRequirements, setMinPointsRequirements] = useState<AssignmentMinPoints>({});
 
   const form = useForm<FormData>({
     resolver: zodResolver(createGradeContractSchema),
@@ -118,6 +121,7 @@ export function CreateGradeContractDialog({
       form.reset();
       setSelectedAssignments([]);
       setCategoryRequirements({});
+      setMinPointsRequirements({});
     },
     onError: (error: Error) => {
       toast({
@@ -137,8 +141,15 @@ export function CreateGradeContractDialog({
       .filter(([_, required]) => required !== null && required > 0)
       .map(([category, required]) => ({ category, required: required as number }));
 
+    // Add minPoints to assignments that have them
+    const assignmentsWithMinPoints = values.assignments.map(a => ({
+      ...a,
+      minPoints: minPointsRequirements[a.id],
+    }));
+
     createContractMutation.mutate({
       ...values,
+      assignments: assignmentsWithMinPoints,
       categoryRequirements: categoryReqs.length > 0 ? categoryReqs : undefined,
     });
   };
@@ -245,24 +256,56 @@ export function CreateGradeContractDialog({
                               setSelectedAssignments(selectedAssignments.filter(id => id !== assignment.id));
                               const currentAssignments = form.getValues("assignments");
                               form.setValue("assignments", currentAssignments.filter(a => a.id !== assignment.id));
+                              // Also remove minPoints requirement
+                              setMinPointsRequirements(prev => {
+                                const { [assignment.id]: _, ...rest } = prev;
+                                return rest;
+                              });
                             }
                           }}
                         />
-                        <div className="space-y-1">
-                          <p className="text-sm font-medium leading-none">{assignment.name}</p>
+                        <div className="space-y-2 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium leading-none">{assignment.name}</p>
+                            {assignment.scoringType === "numeric" && (
+                              <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Points</span>
+                            )}
+                          </div>
                           {selectedAssignments.includes(assignment.id) && (
-                            <Textarea
-                              placeholder="Add specific requirements or comments (optional)"
-                              className="mt-2"
-                              onChange={(e) => {
-                                const currentAssignments = form.getValues("assignments");
-                                const index = currentAssignments.findIndex(a => a.id === assignment.id);
-                                if (index !== -1) {
-                                  currentAssignments[index].comments = e.target.value;
-                                  form.setValue("assignments", currentAssignments);
-                                }
-                              }}
-                            />
+                            <div className="space-y-2">
+                              {assignment.scoringType === "numeric" && (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.1"
+                                    placeholder="Min points"
+                                    className="w-28"
+                                    value={minPointsRequirements[assignment.id] ?? ""}
+                                    onChange={(e) => {
+                                      const value = e.target.value ? parseFloat(e.target.value) : undefined;
+                                      setMinPointsRequirements(prev => ({
+                                        ...prev,
+                                        [assignment.id]: value
+                                      }));
+                                    }}
+                                  />
+                                  <span className="text-xs text-muted-foreground">minimum points required</span>
+                                </div>
+                              )}
+                              <Textarea
+                                placeholder="Add specific requirements or comments (optional)"
+                                className="mt-2"
+                                onChange={(e) => {
+                                  const currentAssignments = form.getValues("assignments");
+                                  const index = currentAssignments.findIndex(a => a.id === assignment.id);
+                                  if (index !== -1) {
+                                    currentAssignments[index].comments = e.target.value;
+                                    form.setValue("assignments", currentAssignments);
+                                  }
+                                }}
+                              />
+                            </div>
                           )}
                         </div>
                       </div>
