@@ -450,8 +450,12 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                             <div>
                               <label className="text-sm font-medium text-muted-foreground">Portal Assignment</label>
                               <Select
-                                value={mapping.portalAssignment?.id.toString() || ""}
+                                value={mapping.portalAssignment?.id.toString() || "__skip__"}
                                 onValueChange={(value) => {
+                                  if (value === "__skip__") {
+                                    updateMapping(index, 'portalAssignment', null);
+                                    return;
+                                  }
                                   const assignment = portalAssignments?.find(a => a.id === parseInt(value));
                                   updateMapping(index, 'portalAssignment', assignment || null);
                                 }}
@@ -460,7 +464,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                                   <SelectValue placeholder="Select assignment..." />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="">-- Skip this column --</SelectItem>
+                                  <SelectItem value="__skip__">-- Skip this column --</SelectItem>
                                   {portalAssignments?.map(a => (
                                     <SelectItem key={a.id} value={a.id.toString()}>
                                       {a.name} ({a.scoringType})
