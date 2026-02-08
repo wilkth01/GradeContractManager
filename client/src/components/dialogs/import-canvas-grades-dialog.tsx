@@ -365,9 +365,9 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
             </TabsTrigger>
           </TabsList>
 
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 overflow-auto min-h-0">
             {/* Upload Tab */}
-            <TabsContent value="upload" className="h-full overflow-auto p-1">
+            <TabsContent value="upload" className="p-1">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
@@ -416,7 +416,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
             </TabsContent>
 
             {/* Mapping Tab */}
-            <TabsContent value="mapping" className="h-full overflow-auto p-1">
+            <TabsContent value="mapping" className="p-1">
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
@@ -521,7 +521,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
             </TabsContent>
 
             {/* Preview Tab */}
-            <TabsContent value="preview" className="h-full overflow-auto p-1">
+            <TabsContent value="preview" className="p-1">
               {preview && (
                 <div className="space-y-4">
                   {/* Summary Cards */}
@@ -667,7 +667,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
             </TabsContent>
 
             {/* Results Tab */}
-            <TabsContent value="results" className="h-full overflow-auto p-1">
+            <TabsContent value="results" className="p-1">
               {importResult && (
                 <div className="space-y-4">
                   <Alert className={importResult.success ? "border-green-500 bg-green-50 dark:bg-green-950/20" : "border-yellow-500 bg-yellow-50 dark:bg-yellow-950/20"}>
