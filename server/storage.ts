@@ -87,6 +87,9 @@ export interface IStorage {
   batchUpsertAttendance(records: { studentId: number; classId: number; date: string; isPresent: boolean; notes?: string }[]): Promise<void>;
   updateStudentAttendance(studentId: number, classId: number, date: Date, isPresent: boolean): Promise<AttendanceRecord>;
   createStudentAttendance(studentId: number, classId: number, date: Date, isPresent: boolean): Promise<AttendanceRecord>;
+
+  // Clone class methods
+  cloneClass(classId: number, instructorId: number): Promise<Class>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -952,6 +955,68 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return created;
+  }
+
+  async cloneClass(classId: number, instructorId: number): Promise<Class> {
+    // Fetch source class
+    const sourceClass = await this.getClass(classId);
+    if (!sourceClass) {
+      throw new Error("Source class not found");
+    }
+
+    // Create new class with " (Copy)" suffix
+    const [newClass] = await db
+      .insert(classes)
+      .values({
+        name: sourceClass.name + " (Copy)",
+        instructorId,
+        isArchived: false,
+        description: sourceClass.description,
+        semesterStartDate: sourceClass.semesterStartDate,
+      })
+      .returning();
+
+    // Clone assignments and build old-to-new ID map
+    const sourceAssignments = await this.getAssignmentsByClass(classId);
+    const assignmentIdMap = new Map<number, number>();
+
+    for (const assignment of sourceAssignments) {
+      const [newAssignment] = await db
+        .insert(assignments)
+        .values({
+          name: assignment.name,
+          classId: newClass.id,
+          moduleGroup: assignment.moduleGroup,
+          scoringType: assignment.scoringType,
+          displayOrder: assignment.displayOrder,
+          dueDate: assignment.dueDate,
+        })
+        .returning();
+      assignmentIdMap.set(assignment.id, newAssignment.id);
+    }
+
+    // Clone grade contracts with remapped assignment IDs
+    const sourceContracts = await this.getContractsByClass(classId);
+    for (const contract of sourceContracts) {
+      const remappedAssignments = (contract.assignments as { id: number; comments?: string; minPoints?: number }[]).map(
+        (a) => ({
+          ...a,
+          id: assignmentIdMap.get(a.id) ?? a.id,
+        })
+      );
+
+      await db.insert(gradeContracts).values({
+        classId: newClass.id,
+        grade: contract.grade,
+        version: contract.version,
+        assignments: remappedAssignments,
+        requiredEngagementIntentions: contract.requiredEngagementIntentions,
+        maxAbsences: contract.maxAbsences,
+        categoryRequirements: contract.categoryRequirements,
+      });
+    }
+
+    return newClass;
   }
 }
 

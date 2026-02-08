@@ -46,7 +46,8 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
-  FolderArchive
+  FolderArchive,
+  Copy
 } from "lucide-react";
 import { CreateClassDialog } from "@/components/dialogs/create-class-dialog";
 import { PasswordResetNotifications } from "@/components/admin/password-reset-notifications";
@@ -121,6 +122,27 @@ export default function InstructorDashboard() {
       });
       setDeleteDialogOpen(false);
       setClassToDelete(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const cloneMutation = useMutation({
+    mutationFn: async (classId: number) => {
+      const res = await apiRequest("POST", `/api/classes/${classId}/clone`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/classes"] });
+      toast({
+        title: "Class Cloned",
+        description: "A copy of the class has been created with all assignments and contracts.",
+      });
     },
     onError: (error: Error) => {
       toast({
@@ -215,6 +237,13 @@ export default function InstructorDashboard() {
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleManageClass(cls.id); }}>
                 <ArrowRight className="mr-2 h-4 w-4" />
                 Manage Class
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(e) => { e.stopPropagation(); cloneMutation.mutate(cls.id); }}
+                disabled={cloneMutation.isPending}
+              >
+                <Copy className="mr-2 h-4 w-4" />
+                Clone Class
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               {isArchived ? (

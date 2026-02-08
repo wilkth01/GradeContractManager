@@ -128,6 +128,27 @@ router.patch("/api/classes/:id", requireInstructor, async (req, res) => {
   res.json(updatedClass);
 });
 
+// Clone a class (copy structure without student data)
+router.post("/api/classes/:id/clone", requireInstructor, async (req, res) => {
+  const classId = parseInt(req.params.id);
+  if (isNaN(classId)) {
+    return res.status(400).json({ message: "Invalid class ID" });
+  }
+
+  const cls = await storage.getClass(classId);
+  if (!cls || cls.instructorId !== req.user!.id) {
+    return res.sendStatus(403);
+  }
+
+  try {
+    const newClass = await storage.cloneClass(classId, req.user!.id);
+    res.status(201).json(newClass);
+  } catch (error) {
+    console.error("Error cloning class:", error);
+    res.status(500).json({ message: "Failed to clone class" });
+  }
+});
+
 // Get enrolled students for a class
 router.get("/api/classes/:classId/enrolled-students", requireInstructor, async (req, res) => {
   const classId = parseInt(req.params.classId);
