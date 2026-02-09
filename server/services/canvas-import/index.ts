@@ -7,6 +7,7 @@ import {
   ImportPreview,
   ImportResult,
   GradeChange,
+  AbsenceChange,
   ImportSummary,
   StudentMatchResult,
   NormalizedStudent,
@@ -53,7 +54,7 @@ export class CanvasImportService {
 
     // Generate grade changes
     const gradeChanges: GradeChange[] = [];
-    const activeMappings = mappings.filter(m => m.portalAssignment !== null);
+    const activeMappings = mappings.filter(m => m.portalAssignment !== null && m.mappingTarget !== 'absences');
 
     for (const grade of normalizedData.grades) {
       // Find the student match
@@ -115,12 +116,48 @@ export class CanvasImportService {
       });
     }
 
+    // Generate absence changes
+    const absenceChanges: AbsenceChange[] = [];
+    const absenceMapping = mappings.find(m => m.mappingTarget === 'absences');
+
+    if (absenceMapping) {
+      for (const matchResult of matchedStudents) {
+        if (!matchResult.matchedStudent) continue;
+
+        // Find the grade entry for this student + absence column
+        const gradeEntry = normalizedData.grades.find(
+          g => g.studentSourceId === matchResult.csvStudent.sourceId &&
+               g.assignmentSourceId === absenceMapping.canvasColumn
+        );
+
+        const newAbsences = gradeEntry ? parseInt(gradeEntry.rawValue, 10) : 0;
+        if (isNaN(newAbsences)) continue;
+
+        // Get current absence count
+        const attendanceRecords = await storage.getAttendanceForStudentInClass(
+          matchResult.matchedStudent.id,
+          classId
+        );
+        const currentAbsences = attendanceRecords.filter(r => !r.isPresent).length;
+
+        if (currentAbsences !== newAbsences) {
+          absenceChanges.push({
+            studentId: matchResult.matchedStudent.id,
+            studentName: matchResult.matchedStudent.fullName,
+            currentAbsences,
+            newAbsences,
+          });
+        }
+      }
+    }
+
     // Calculate summary
     const summary: ImportSummary = {
       totalStudents: normalizedData.students.length,
       matchedStudents: matchedStudents.length,
       unmatchedStudents: unmatchedStudents.length,
       totalGradeUpdates: gradeChanges.length,
+      totalAbsenceUpdates: absenceChanges.length,
       assignmentsMapped: activeMappings.length
     };
 
@@ -128,6 +165,7 @@ export class CanvasImportService {
       matchedStudents,
       unmatchedStudents,
       gradeChanges,
+      absenceChanges,
       summary
     };
   }
@@ -135,10 +173,15 @@ export class CanvasImportService {
   /**
    * Execute the import using approved grade changes
    */
-  async executeImport(gradeChanges: GradeChange[]): Promise<ImportResult> {
+  async executeImport(
+    gradeChanges: GradeChange[],
+    classId: number,
+    absenceChanges?: AbsenceChange[]
+  ): Promise<ImportResult> {
     const processedStudents = new Set<number>();
     const errors: { student: string; assignment: string; error: string }[] = [];
     let processedGrades = 0;
+    let processedAbsences = 0;
 
     for (const change of gradeChanges) {
       try {
@@ -170,10 +213,28 @@ export class CanvasImportService {
       }
     }
 
+    // Process absence changes
+    if (absenceChanges) {
+      for (const change of absenceChanges) {
+        try {
+          await storage.setStudentAbsences(change.studentId, classId, change.newAbsences);
+          processedStudents.add(change.studentId);
+          processedAbsences++;
+        } catch (error) {
+          errors.push({
+            student: change.studentName,
+            assignment: 'Absences',
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        }
+      }
+    }
+
     return {
       success: errors.length === 0,
       processedStudents: processedStudents.size,
       processedGrades,
+      processedAbsences,
       skippedStudents: [],
       errors
     };

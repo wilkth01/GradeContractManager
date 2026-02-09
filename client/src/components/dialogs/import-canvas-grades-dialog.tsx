@@ -73,6 +73,14 @@ interface AssignmentMapping {
   canvasColumn: string;
   portalAssignment: Assignment | null;
   gradingType: 'points' | 'percentage' | 'letter' | 'status';
+  mappingTarget?: 'assignment' | 'absences';
+}
+
+interface AbsenceChange {
+  studentId: number;
+  studentName: string;
+  currentAbsences: number;
+  newAbsences: number;
 }
 
 interface GradeChange {
@@ -95,11 +103,13 @@ interface ImportPreview {
   }[];
   unmatchedStudents: NormalizedStudent[];
   gradeChanges: GradeChange[];
+  absenceChanges: AbsenceChange[];
   summary: {
     totalStudents: number;
     matchedStudents: number;
     unmatchedStudents: number;
     totalGradeUpdates: number;
+    totalAbsenceUpdates: number;
     assignmentsMapped: number;
   };
 }
@@ -108,6 +118,7 @@ interface ImportResult {
   success: boolean;
   processedStudents: number;
   processedGrades: number;
+  processedAbsences: number;
   skippedStudents: string[];
   errors: { student: string; assignment: string; error: string }[];
 }
@@ -173,17 +184,24 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
       const res = await apiRequest(
         "POST",
         `/api/classes/${classId}/canvas/import`,
-        { gradeChanges: preview.gradeChanges }
+        {
+          gradeChanges: preview.gradeChanges,
+          absenceChanges: preview.absenceChanges,
+        }
       );
       return res.json() as Promise<ImportResult>;
     },
     onSuccess: (result) => {
       setImportResult(result);
       queryClient.invalidateQueries({ queryKey: [`/api/classes/${classId}/students/progress`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/classes/${classId}/attendance`] });
       setActiveTab("results");
+      const parts = [];
+      if (result.processedGrades > 0) parts.push(`${result.processedGrades} grades`);
+      if (result.processedAbsences > 0) parts.push(`${result.processedAbsences} absence records`);
       toast({
         title: "Import Successful",
-        description: `Updated ${result.processedGrades} grades for ${result.processedStudents} students`,
+        description: `Updated ${parts.join(' and ')} for ${result.processedStudents} students`,
       });
     },
     onError: (error: Error) => {
@@ -324,7 +342,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
     }));
   };
 
-  const mappedCount = mappings.filter(m => m.portalAssignment).length;
+  const mappedCount = mappings.filter(m => m.portalAssignment || m.mappingTarget === 'absences').length;
   const canPreview = mappedCount > 0 && normalizedData;
 
   return (
@@ -441,8 +459,10 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                             <div className="font-medium truncate flex-1 mr-2" title={mapping.canvasColumn}>
                               {mapping.canvasColumn}
                             </div>
-                            {mapping.portalAssignment && (
-                              <Badge variant="secondary" className="flex-shrink-0">Mapped</Badge>
+                            {(mapping.portalAssignment || mapping.mappingTarget === 'absences') && (
+                              <Badge variant="secondary" className="flex-shrink-0">
+                                {mapping.mappingTarget === 'absences' ? 'Absences' : 'Mapped'}
+                              </Badge>
                             )}
                           </div>
 
@@ -450,14 +470,24 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                             <div>
                               <label className="text-sm font-medium text-muted-foreground">Portal Assignment</label>
                               <Select
-                                value={mapping.portalAssignment?.id.toString() || "__skip__"}
+                                value={mapping.mappingTarget === 'absences' ? '__absences__' : (mapping.portalAssignment?.id.toString() || "__skip__")}
                                 onValueChange={(value) => {
                                   if (value === "__skip__") {
-                                    updateMapping(index, 'portalAssignment', null);
+                                    setMappings(prev => prev.map((m, i) =>
+                                      i === index ? { ...m, portalAssignment: null, mappingTarget: undefined } : m
+                                    ));
+                                    return;
+                                  }
+                                  if (value === "__absences__") {
+                                    setMappings(prev => prev.map((m, i) =>
+                                      i === index ? { ...m, portalAssignment: null, mappingTarget: 'absences' as const } : m
+                                    ));
                                     return;
                                   }
                                   const assignment = portalAssignments?.find(a => a.id === parseInt(value));
-                                  updateMapping(index, 'portalAssignment', assignment || null);
+                                  setMappings(prev => prev.map((m, i) =>
+                                    i === index ? { ...m, portalAssignment: assignment || null, mappingTarget: 'assignment' as const } : m
+                                  ));
                                 }}
                               >
                                 <SelectTrigger className="mt-1">
@@ -465,6 +495,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="__skip__">-- Skip this column --</SelectItem>
+                                  <SelectItem value="__absences__">Absences (count)</SelectItem>
                                   {portalAssignments?.map(a => (
                                     <SelectItem key={a.id} value={a.id.toString()}>
                                       {a.name} ({a.scoringType})
@@ -474,6 +505,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                               </Select>
                             </div>
 
+                            {mapping.mappingTarget !== 'absences' && (
                             <div>
                               <label className="text-sm font-medium text-muted-foreground">Canvas Grade Type</label>
                               <Select
@@ -491,6 +523,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                                 </SelectContent>
                               </Select>
                             </div>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -525,7 +558,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
               {preview && (
                 <div className="space-y-4">
                   {/* Summary Cards */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className={`grid grid-cols-2 ${preview.summary.totalAbsenceUpdates > 0 ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3`}>
                     <Card className="bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800">
                       <CardContent className="p-4 text-center">
                         <Users className="h-6 w-6 text-blue-600 mx-auto mb-1" />
@@ -565,6 +598,18 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                         <div className="text-xs text-purple-600 dark:text-purple-300">Grade Updates</div>
                       </CardContent>
                     </Card>
+
+                    {preview.summary.totalAbsenceUpdates > 0 && (
+                      <Card className="bg-orange-50 dark:bg-orange-950/20 border-orange-200 dark:border-orange-800">
+                        <CardContent className="p-4 text-center">
+                          <AlertTriangle className="h-6 w-6 text-orange-600 mx-auto mb-1" />
+                          <div className="text-2xl font-bold text-orange-700 dark:text-orange-400">
+                            {preview.summary.totalAbsenceUpdates}
+                          </div>
+                          <div className="text-xs text-orange-600 dark:text-orange-300">Absence Updates</div>
+                        </CardContent>
+                      </Card>
+                    )}
                   </div>
 
                   {/* Unmatched Students Warning */}
@@ -643,22 +688,64 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                     </CardContent>
                   </Card>
 
+                  {/* Absence Changes */}
+                  {preview.absenceChanges.length > 0 && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Absence Changes Preview</CardTitle>
+                        <CardDescription>
+                          {preview.absenceChanges.length} student absence records will be updated
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <ScrollArea className="h-[200px]">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Student</TableHead>
+                                <TableHead className="text-right">Current</TableHead>
+                                <TableHead className="text-center w-10"></TableHead>
+                                <TableHead>New</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {preview.absenceChanges.map((change, i) => (
+                                <TableRow key={i}>
+                                  <TableCell className="font-medium">{change.studentName}</TableCell>
+                                  <TableCell className="text-right text-muted-foreground">
+                                    {change.currentAbsences}
+                                  </TableCell>
+                                  <TableCell className="text-center">
+                                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                                  </TableCell>
+                                  <TableCell className="font-medium text-green-600 dark:text-green-400">
+                                    {change.newAbsences}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </ScrollArea>
+                      </CardContent>
+                    </Card>
+                  )}
+
                   {/* Import Button */}
                   <Button
                     onClick={() => importMutation.mutate()}
-                    disabled={importMutation.isPending || preview.gradeChanges.length === 0}
+                    disabled={importMutation.isPending || (preview.gradeChanges.length === 0 && preview.absenceChanges.length === 0)}
                     className="w-full"
                     size="lg"
                   >
                     {importMutation.isPending ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        Importing Grades...
+                        Importing...
                       </>
                     ) : (
                       <>
                         <Upload className="h-4 w-4 mr-2" />
-                        Import {preview.gradeChanges.length} Grade Updates
+                        Import {preview.gradeChanges.length + preview.absenceChanges.length} Updates
                       </>
                     )}
                   </Button>
@@ -680,7 +767,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                       {importResult.success ? "Import Complete" : "Import Completed with Issues"}
                     </AlertTitle>
                     <AlertDescription className={importResult.success ? "text-green-600 dark:text-green-300" : "text-yellow-600 dark:text-yellow-300"}>
-                      Updated {importResult.processedGrades} grades for {importResult.processedStudents} students
+                      Updated {importResult.processedGrades} grades{importResult.processedAbsences > 0 ? ` and ${importResult.processedAbsences} absence records` : ''} for {importResult.processedStudents} students
                     </AlertDescription>
                   </Alert>
 

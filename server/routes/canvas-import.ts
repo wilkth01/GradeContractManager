@@ -6,6 +6,7 @@ import {
   NormalizedGradeData,
   AssignmentMapping,
   GradeChange,
+  AbsenceChange,
 } from "../services/canvas-import";
 
 const router = Router();
@@ -65,19 +66,20 @@ router.post("/api/classes/:classId/canvas/import", requireInstructor, async (req
     return res.status(403).json({ message: "Not authorized" });
   }
 
-  const { gradeChanges } = req.body as { gradeChanges: GradeChange[] };
+  const { gradeChanges, absenceChanges } = req.body as { gradeChanges: GradeChange[]; absenceChanges?: AbsenceChange[] };
 
   if (!gradeChanges || !Array.isArray(gradeChanges)) {
     return res.status(400).json({ message: "Missing or invalid gradeChanges" });
   }
 
   try {
-    const result = await importService.executeImport(gradeChanges);
+    const result = await importService.executeImport(gradeChanges, classId, absenceChanges);
 
     // Log successful imports to audit (if audit service is available)
     console.log(`Canvas import completed for class ${classId}:`, {
       processedStudents: result.processedStudents,
       processedGrades: result.processedGrades,
+      processedAbsences: result.processedAbsences,
       errors: result.errors.length
     });
 

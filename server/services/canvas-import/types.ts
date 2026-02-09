@@ -89,6 +89,17 @@ export interface AssignmentMapping {
   canvasColumn: string;
   portalAssignment: Assignment | null;
   gradingType: 'points' | 'percentage' | 'letter' | 'status';
+  mappingTarget?: 'assignment' | 'absences';
+}
+
+/**
+ * A single absence change to be applied
+ */
+export interface AbsenceChange {
+  studentId: number;
+  studentName: string;
+  currentAbsences: number;
+  newAbsences: number;
 }
 
 /**
@@ -112,6 +123,7 @@ export interface ImportPreview {
   matchedStudents: StudentMatchResult[];
   unmatchedStudents: NormalizedStudent[];
   gradeChanges: GradeChange[];
+  absenceChanges: AbsenceChange[];
   summary: ImportSummary;
 }
 
@@ -123,6 +135,7 @@ export interface ImportSummary {
   matchedStudents: number;
   unmatchedStudents: number;
   totalGradeUpdates: number;
+  totalAbsenceUpdates: number;
   assignmentsMapped: number;
 }
 
@@ -133,6 +146,7 @@ export interface ImportResult {
   success: boolean;
   processedStudents: number;
   processedGrades: number;
+  processedAbsences: number;
   skippedStudents: string[];
   errors: ImportError[];
 }
@@ -159,4 +173,5 @@ export interface PreviewRequest {
  */
 export interface ImportRequest {
   gradeChanges: GradeChange[];
+  absenceChanges?: AbsenceChange[];
 }
