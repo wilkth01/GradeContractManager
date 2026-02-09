@@ -61,7 +61,7 @@ function formatChange(
     const oldGrade = oldValues?.numericGrade as string | undefined;
     const newGrade = newValues?.numericGrade as string | undefined;
 
-    const statusLabels = ["Not Started", "In Progress", "Completed", "Excellent"];
+    const statusLabels = ["Not Submitted", "Not Submitted", "Work-in-Progress", "Successfully Completed"];
 
     if (newStatus !== undefined && oldStatus !== newStatus) {
       const oldLabel = statusLabels[oldStatus ?? 0] || "Unknown";

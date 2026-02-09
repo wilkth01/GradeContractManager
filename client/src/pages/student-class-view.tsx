@@ -388,7 +388,7 @@ export default function StudentClassView() {
                                 <div className="flex items-center gap-1.5">
                                   <Circle className="h-4 w-4 text-yellow-600" />
                                   <span className="font-medium">{groupStats.inProgress}</span>
-                                  <span className="text-muted-foreground">In Progress</span>
+                                  <span className="text-muted-foreground">WIP</span>
                                 </div>
                                 <div className="flex items-center gap-1.5">
                                   <XCircle className="h-4 w-4 text-gray-400" />
@@ -593,8 +593,8 @@ const getAssignmentStatus = (assignment: Assignment, progress?: AssignmentProgre
 
   if (assignment.scoringType === "status") {
     switch (progress.status) {
-      case AssignmentStatus.COMPLETED: return "completed";
-      case AssignmentStatus.IN_PROGRESS: return "in-progress";
+      case AssignmentStatus.EXCELLENT: return "completed";
+      case AssignmentStatus.COMPLETED: return "in-progress";
       default: return "not-submitted";
     }
   } else {
@@ -619,13 +619,13 @@ const getStatusIcon = (status: string) => {
 const getStatusLabel = (status: string, assignment?: Assignment, progress?: AssignmentProgress) => {
   switch (status) {
     case "completed":
-      return "Successfully completed";
+      return "Successfully Completed";
     case "in-progress":
-      return "Work in progress";
+      return "Work-in-Progress";
     case "not-submitted":
-      return "Not yet submitted";
+      return "Not Submitted";
     default:
-      return "Not yet submitted";
+      return "Not Submitted";
   }
 };
 

@@ -13,10 +13,10 @@ export class GradeConverter {
 
   /**
    * Convert a Canvas grade to portal status (0-3)
-   * 0 = Not Started
-   * 1 = In Progress
-   * 2 = Completed
-   * 3 = Excellent
+   * 0 = Not Submitted
+   * 1 = Not Submitted
+   * 2 = Work-in-Progress
+   * 3 = Successfully Completed
    */
   toStatus(rawValue: string, gradingType: string): number {
     const value = rawValue.toLowerCase().trim();
@@ -126,28 +126,23 @@ export class GradeConverter {
    * Convert text status to status number (0-3)
    */
   private textToStatus(value: string): number {
-    // Excellent indicators
-    if (/excellent|outstanding|exceptional|perfect/i.test(value)) {
+    // Successfully Completed indicators
+    if (/excellent|outstanding|exceptional|perfect|complete|done|submitted|finished|passed|satisfactory/i.test(value)) {
       return 3;
     }
 
-    // Completed indicators
-    if (/complete|done|submitted|finished|passed|satisfactory/i.test(value)) {
+    // Work-in-Progress indicators
+    if (/progress|partial|incomplete|pending|started|working/i.test(value)) {
       return 2;
     }
 
-    // In progress indicators
-    if (/progress|partial|incomplete|pending|started|working/i.test(value)) {
-      return 1;
-    }
-
-    // Not started indicators
+    // Not Submitted indicators
     if (/missing|not\s*submitted|absent|none|failed|0/i.test(value)) {
       return 0;
     }
 
-    // Default to in progress for any unrecognized non-empty value
-    return 1;
+    // Default to Work-in-Progress for any unrecognized non-empty value
+    return 2;
   }
 
   /**
@@ -172,10 +167,10 @@ export class GradeConverter {
    */
   static getStatusLabel(status: number): string {
     const labels: Record<number, string> = {
-      0: 'Not Started',
-      1: 'In Progress',
-      2: 'Completed',
-      3: 'Excellent'
+      0: 'Not Submitted',
+      1: 'Not Submitted',
+      2: 'Work-in-Progress',
+      3: 'Successfully Completed'
     };
     return labels[status] ?? 'Unknown';
   }

@@ -124,10 +124,10 @@ interface ImportResult {
 }
 
 const STATUS_LABELS: Record<number, string> = {
-  0: 'Not Started',
-  1: 'In Progress',
-  2: 'Completed',
-  3: 'Excellent'
+  0: 'Not Submitted',
+  1: 'Not Submitted',
+  2: 'Work-in-Progress',
+  3: 'Successfully Completed'
 };
 
 export function ImportCanvasGradesDialog({ classId, trigger }: Props) {

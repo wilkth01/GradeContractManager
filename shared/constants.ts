@@ -12,10 +12,10 @@ export const AssignmentStatus = {
 export type AssignmentStatusValue = typeof AssignmentStatus[keyof typeof AssignmentStatus];
 
 /**
- * Helper to check if an assignment is considered "done" (completed or excellent)
+ * Helper to check if an assignment is considered "done" (successfully completed)
  */
 export function isAssignmentDone(status: number | null | undefined): boolean {
-  return (status ?? 0) >= AssignmentStatus.COMPLETED;
+  return (status ?? 0) >= AssignmentStatus.EXCELLENT;
 }
 
 /**
@@ -23,16 +23,14 @@ export function isAssignmentDone(status: number | null | undefined): boolean {
  */
 export function getAssignmentStatusLabel(status: number | null | undefined): string {
   switch (status ?? 0) {
-    case AssignmentStatus.NOT_STARTED:
-      return "Not Started";
-    case AssignmentStatus.IN_PROGRESS:
-      return "In Progress";
-    case AssignmentStatus.COMPLETED:
-      return "Completed";
     case AssignmentStatus.EXCELLENT:
-      return "Excellent";
+      return "Successfully Completed";
+    case AssignmentStatus.COMPLETED:
+      return "Work-in-Progress";
+    case AssignmentStatus.NOT_STARTED:
+    case AssignmentStatus.IN_PROGRESS:
     default:
-      return "Not Started";
+      return "Not Submitted";
   }
 }
 

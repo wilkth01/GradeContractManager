@@ -351,8 +351,8 @@ export default function ClassManagement() {
 
     if (assignment.scoringType === "status") {
       switch (progress.status) {
-        case AssignmentStatus.COMPLETED: return "completed";
-        case AssignmentStatus.IN_PROGRESS: return "in-progress";
+        case AssignmentStatus.EXCELLENT: return "completed";
+        case AssignmentStatus.COMPLETED: return "in-progress";
         default: return "not-submitted";
       }
     } else {

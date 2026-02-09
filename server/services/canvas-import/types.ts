@@ -55,10 +55,10 @@ export interface StudentMatchResult {
  */
 export interface GradeConversionConfig {
   statusThresholds: {
-    notStarted: number;     // Below this = 0 (Not Started)
-    inProgress: number;     // Below this = 1 (In Progress)
-    completed: number;      // Below this = 2 (Completed)
-    excellent: number;      // At or above this = 3 (Excellent)
+    notStarted: number;     // Below this = 0 (Not Submitted)
+    inProgress: number;     // At or above = 1 (Not Submitted)
+    completed: number;      // At or above = 2 (Work-in-Progress)
+    excellent: number;      // At or above = 3 (Successfully Completed)
   };
   letterGradeMap: Record<string, number>;
 }
@@ -68,16 +68,16 @@ export interface GradeConversionConfig {
  */
 export const DEFAULT_GRADE_CONFIG: GradeConversionConfig = {
   statusThresholds: {
-    notStarted: 1,    // 0 = Not Started
-    inProgress: 70,   // 1-69 = In Progress
-    completed: 90,    // 70-89 = Completed
-    excellent: 90     // 90+ = Excellent
+    notStarted: 1,    // 0 = Not Submitted
+    inProgress: 1,    // 1+ = Not Submitted (same as 0)
+    completed: 1,     // 1-69 = Work-in-Progress
+    excellent: 70     // 70+ = Successfully Completed
   },
   letterGradeMap: {
     'A': 3,
-    'B': 2,
+    'B': 3,
     'C': 2,
-    'D': 1,
+    'D': 2,
     'F': 0
   }
 };

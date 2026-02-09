@@ -143,9 +143,9 @@ export function UpdateAssignmentStatusDialog({ classId, studentId, assignment, c
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="0">Not Yet Submitted</SelectItem>
-                        <SelectItem value="1">Work in Progress</SelectItem>
-                        <SelectItem value="2">Successfully Completed</SelectItem>
+                        <SelectItem value="0">Not Submitted</SelectItem>
+                        <SelectItem value="2">Work-in-Progress</SelectItem>
+                        <SelectItem value="3">Successfully Completed</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
