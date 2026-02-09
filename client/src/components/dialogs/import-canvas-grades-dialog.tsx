@@ -72,7 +72,7 @@ interface NormalizedGradeData {
 interface AssignmentMapping {
   canvasColumn: string;
   portalAssignment: Assignment | null;
-  gradingType: 'points' | 'percentage' | 'letter' | 'status';
+  gradingType: 'points' | 'percentage' | 'letter' | 'status' | 'numerical_status';
   mappingTarget?: 'assignment' | 'absences';
 }
 
@@ -520,6 +520,7 @@ export function ImportCanvasGradesDialog({ classId, trigger }: Props) {
                                   <SelectItem value="percentage">Percentage</SelectItem>
                                   <SelectItem value="letter">Letter Grade</SelectItem>
                                   <SelectItem value="status">Status Text</SelectItem>
+                                  <SelectItem value="numerical_status">Numerical Status (0-3)</SelectItem>
                                 </SelectContent>
                               </Select>
                             </div>

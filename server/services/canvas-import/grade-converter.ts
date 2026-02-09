@@ -26,6 +26,13 @@ export class GradeConverter {
       return 0;
     }
 
+    // Handle raw numerical status (0-3 maps directly)
+    if (gradingType === 'numerical_status') {
+      const num = parseInt(rawValue, 10);
+      if (isNaN(num) || num < 0 || num > 3) return 0;
+      return num;
+    }
+
     // Handle numeric grades (points/percentage)
     if (gradingType === 'points' || gradingType === 'percentage') {
       return this.numericToStatus(rawValue);
@@ -49,6 +56,13 @@ export class GradeConverter {
     // Handle empty/missing values
     if (!value || value === '-' || value === 'unsubmitted' || value === 'n/a') {
       return 0;
+    }
+
+    // Handle raw numerical status - map 0-3 to 0-4 scale
+    if (gradingType === 'numerical_status') {
+      const num = parseInt(rawValue, 10);
+      if (isNaN(num) || num < 0) return 0;
+      return Math.min(4, Math.round((num / 3) * 4 * 10) / 10);
     }
 
     // Handle numeric grades directly

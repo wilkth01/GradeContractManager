@@ -88,7 +88,7 @@ export const DEFAULT_GRADE_CONFIG: GradeConversionConfig = {
 export interface AssignmentMapping {
   canvasColumn: string;
   portalAssignment: Assignment | null;
-  gradingType: 'points' | 'percentage' | 'letter' | 'status';
+  gradingType: 'points' | 'percentage' | 'letter' | 'status' | 'numerical_status';
   mappingTarget?: 'assignment' | 'absences';
 }
 
