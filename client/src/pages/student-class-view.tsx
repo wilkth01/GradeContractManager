@@ -3,7 +3,7 @@ import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Class, Assignment, GradeContract, AssignmentProgress } from "@shared/schema";
 
-type CategoryRequirement = { category: string; required: number };
+type CategoryRequirement = { category: string; required: number; minAverage?: number };
 type GradeContractWithCategories = GradeContract & { categoryRequirements?: CategoryRequirement[] | null };
 import { AssignmentStatus } from "@shared/constants";
 import { Button } from "@/components/ui/button";
@@ -362,7 +362,77 @@ export default function StudentClassView() {
                           // Check if there's a category requirement for this group
                           const categoryReq = currentContract.categoryRequirements?.find(cr => cr.category === group);
                           const requiredCount = categoryReq?.required || totalInGroup;
-                          const categoryMet = groupStats.completed >= requiredCount;
+                          const countMet = groupStats.completed >= requiredCount;
+
+                          // Calculate average for numeric assignments in this group
+                          const minAverage = categoryReq && 'minAverage' in categoryReq ? categoryReq.minAverage : undefined;
+                          const computeGroupAverage = () => {
+                            const grades = groupAssignments.map(({ assignment }) => {
+                              const progress = studentProgress?.find(p => p.assignmentId === assignment.id);
+                              return progress?.numericGrade ? parseFloat(progress.numericGrade) : 0;
+                            });
+                            return grades.reduce((sum, g) => sum + g, 0) / grades.length;
+                          };
+                          const groupAverage = minAverage != null ? computeGroupAverage() : 0;
+                          const averageMet = minAverage != null ? groupAverage >= minAverage : true;
+                          const categoryMet = countMet && averageMet;
+
+                          // If minAverage is set, show collapsed average display
+                          if (minAverage != null) {
+                            return (
+                              <div key={group} className="space-y-4" role="region" aria-labelledby={`group-${group}`}>
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <h4 id={`group-${group}`} className="font-bold text-xl text-[#0072BC]">{group}</h4>
+                                    <span className={`text-sm px-2 py-0.5 rounded-full ${
+                                      categoryMet
+                                        ? "bg-green-100 text-green-700"
+                                        : "bg-amber-100 text-amber-700"
+                                    }`}>
+                                      {categoryMet ? "Met" : "Not Met"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <Card className="border-2">
+                                  <CardContent className="pt-6">
+                                    <div className="space-y-4">
+                                      <div className="flex items-center justify-between">
+                                        <div className={`px-4 py-3 rounded-md border text-lg font-semibold ${
+                                          averageMet
+                                            ? "bg-green-50 border-green-200 text-green-700"
+                                            : "bg-amber-50 border-amber-200 text-amber-700"
+                                        }`}>
+                                          Average: {groupAverage.toFixed(1)} / {minAverage} required
+                                        </div>
+                                        {averageMet ? (
+                                          <CheckCircle2 className="h-8 w-8 text-green-600" />
+                                        ) : (
+                                          <AlertTriangle className="h-8 w-8 text-amber-600" />
+                                        )}
+                                      </div>
+                                      <div className="space-y-1">
+                                        <div className="flex justify-between text-xs text-muted-foreground">
+                                          <span>Progress toward {minAverage} average</span>
+                                          <span>{Math.min(100, Math.round((groupAverage / minAverage) * 100))}%</span>
+                                        </div>
+                                        <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                          <div
+                                            className={`h-2.5 rounded-full transition-all ${
+                                              averageMet ? "bg-green-600" : "bg-amber-500"
+                                            }`}
+                                            style={{ width: `${Math.min(100, (groupAverage / minAverage) * 100)}%` }}
+                                          />
+                                        </div>
+                                      </div>
+                                      <p className="text-sm text-muted-foreground">
+                                        Based on {totalInGroup} assignment{totalInGroup !== 1 ? "s" : ""} in this group
+                                      </p>
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              </div>
+                            );
+                          }
 
                           return (
                           <div key={group} className="space-y-4" role="region" aria-labelledby={`group-${group}`}>
@@ -417,17 +487,6 @@ export default function StudentClassView() {
                                 );
                                 const status = getAssignmentStatus(assignment, progress);
                                 const statusLabel = getStatusLabel(status, assignment, progress);
-                                
-                                if (assignment.name.toLowerCase().includes('autobiography')) {
-                                  console.log(`Tech Autobiography Debug:`, {
-                                    assignmentId: assignment.id,
-                                    assignmentName: assignment.name,
-                                    scoringType: assignment.scoringType,
-                                    progress: progress,
-                                    status: status,
-                                    statusLabel: statusLabel
-                                  });
-                                }
 
                                 const pastDue = isPastDue(assignment.dueDate) && status !== "completed";
 
@@ -451,8 +510,8 @@ export default function StudentClassView() {
                                     <CardHeader className="pb-4">
                                       <div className="flex items-start justify-between gap-4">
                                         <div className="space-y-2 flex-1">
-                                          <CardTitle 
-                                            id={`assignment-${assignment.id}-title`} 
+                                          <CardTitle
+                                            id={`assignment-${assignment.id}-title`}
                                             className="text-xl font-bold"
                                           >
                                             {assignment.name}

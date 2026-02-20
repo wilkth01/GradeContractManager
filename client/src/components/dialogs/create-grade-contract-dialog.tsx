@@ -47,11 +47,12 @@ const createGradeContractSchema = z.object({
   categoryRequirements: z.array(z.object({
     category: z.string(),
     required: z.number().min(1),
+    minAverage: z.number().min(0).max(4).optional(),
   })).optional(),
 });
 
 type FormData = z.infer<typeof createGradeContractSchema>;
-type CategoryRequirement = { category: string; required: number };
+type CategoryRequirement = { category: string; required: number; minAverage?: number };
 type AssignmentMinPoints = Record<number, number | undefined>;
 
 export function CreateGradeContractDialog({
@@ -66,6 +67,7 @@ export function CreateGradeContractDialog({
   const queryClient = useQueryClient();
   const [selectedAssignments, setSelectedAssignments] = useState<number[]>([]);
   const [categoryRequirements, setCategoryRequirements] = useState<Record<string, number | null>>({});
+  const [categoryMinAverages, setCategoryMinAverages] = useState<Record<string, number | null>>({});
   const [minPointsRequirements, setMinPointsRequirements] = useState<AssignmentMinPoints>({});
 
   const form = useForm<FormData>({
@@ -94,7 +96,8 @@ export function CreateGradeContractDialog({
     )
     .map(([category, categoryAssignments]) => ({
       category,
-      totalSelected: categoryAssignments.filter(a => selectedAssignments.includes(a.id)).length
+      totalSelected: categoryAssignments.filter(a => selectedAssignments.includes(a.id)).length,
+      hasNumeric: categoryAssignments.some(a => selectedAssignments.includes(a.id) && a.scoringType === "numeric"),
     }));
 
   const createContractMutation = useMutation({
@@ -121,6 +124,7 @@ export function CreateGradeContractDialog({
       form.reset();
       setSelectedAssignments([]);
       setCategoryRequirements({});
+      setCategoryMinAverages({});
       setMinPointsRequirements({});
     },
     onError: (error: Error) => {
@@ -139,7 +143,14 @@ export function CreateGradeContractDialog({
     // Build category requirements array from state
     const categoryReqs: CategoryRequirement[] = Object.entries(categoryRequirements)
       .filter(([_, required]) => required !== null && required > 0)
-      .map(([category, required]) => ({ category, required: required as number }));
+      .map(([category, required]) => {
+        const minAvg = categoryMinAverages[category];
+        return {
+          category,
+          required: required as number,
+          ...(minAvg != null && minAvg > 0 ? { minAverage: minAvg } : {}),
+        };
+      });
 
     // Add minPoints to assignments that have them
     const assignmentsWithMinPoints = values.assignments.map(a => ({
@@ -324,7 +335,7 @@ export function CreateGradeContractDialog({
                       Leave blank to require all selected assignments in that category.
                     </p>
                   </div>
-                  {selectedCategories.map(({ category, totalSelected }) => (
+                  {selectedCategories.map(({ category, totalSelected, hasNumeric }) => (
                     <div key={category} className="flex items-center gap-4">
                       <div className="flex-1">
                         <p className="text-sm font-medium">{category}</p>
@@ -349,6 +360,27 @@ export function CreateGradeContractDialog({
                           }}
                         />
                         <span className="text-sm text-muted-foreground">required</span>
+                        {hasNumeric && (
+                          <>
+                            <Input
+                              type="number"
+                              min="0"
+                              max="4"
+                              step="0.1"
+                              placeholder="—"
+                              className="w-20"
+                              value={categoryMinAverages[category] ?? ""}
+                              onChange={(e) => {
+                                const value = e.target.value ? parseFloat(e.target.value) : null;
+                                setCategoryMinAverages(prev => ({
+                                  ...prev,
+                                  [category]: value
+                                }));
+                              }}
+                            />
+                            <span className="text-sm text-muted-foreground">min avg</span>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}

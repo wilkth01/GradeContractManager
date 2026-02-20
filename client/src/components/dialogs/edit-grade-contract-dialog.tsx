@@ -49,11 +49,12 @@ const editGradeContractSchema = z.object({
   categoryRequirements: z.array(z.object({
     category: z.string(),
     required: z.number().min(1),
+    minAverage: z.number().min(0).max(4).optional(),
   })).optional(),
 });
 
 type FormData = z.infer<typeof editGradeContractSchema>;
-type CategoryRequirement = { category: string; required: number };
+type CategoryRequirement = { category: string; required: number; minAverage?: number };
 type AssignmentMinPoints = Record<number, number | undefined>;
 
 // Type for the API payload (doesn't include assignmentComments which is only for form state)
@@ -62,7 +63,7 @@ type ContractUpdatePayload = {
   requiredEngagementIntentions: number;
   maxAbsences: number;
   assignments: { id: number; comments?: string; minPoints?: number }[];
-  categoryRequirements?: { category: string; required: number }[];
+  categoryRequirements?: { category: string; required: number; minAverage?: number }[];
   version: number;
 };
 
@@ -72,7 +73,7 @@ export function EditGradeContractDialog({
   assignments
 }: {
   classId: number;
-  contract: GradeContract & { categoryRequirements?: CategoryRequirement[] | null };
+  contract: GradeContract & { categoryRequirements?: (CategoryRequirement | { category: string; required: number })[] | null };
   assignments: Assignment[];
 }) {
   const [open, setOpen] = useState(false);
@@ -96,6 +97,15 @@ export function EditGradeContractDialog({
     initialCategoryReqs[cr.category] = cr.required;
   });
   const [categoryRequirements, setCategoryRequirements] = useState<Record<string, number | null>>(initialCategoryReqs);
+
+  // Build initial minAverage values from existing contract
+  const initialMinAverages: Record<string, number | null> = {};
+  (contract.categoryRequirements || []).forEach(cr => {
+    if ('minAverage' in cr && cr.minAverage != null) {
+      initialMinAverages[cr.category] = cr.minAverage;
+    }
+  });
+  const [categoryMinAverages, setCategoryMinAverages] = useState<Record<string, number | null>>(initialMinAverages);
 
   // Build initial minPoints from existing contract assignments
   const initialMinPoints: AssignmentMinPoints = {};
@@ -121,7 +131,8 @@ export function EditGradeContractDialog({
     )
     .map(([category, categoryAssignments]) => ({
       category,
-      totalSelected: categoryAssignments.filter(a => selectedAssignments.includes(a.id)).length
+      totalSelected: categoryAssignments.filter(a => selectedAssignments.includes(a.id)).length,
+      hasNumeric: categoryAssignments.some(a => selectedAssignments.includes(a.id) && a.scoringType === "numeric"),
     }));
 
   const form = useForm<FormData>({
@@ -157,6 +168,7 @@ export function EditGradeContractDialog({
       form.reset();
       setSelectedAssignments([]);
       setCategoryRequirements({});
+      setCategoryMinAverages({});
       setMinPointsRequirements({});
     },
     onError: (error: Error) => {
@@ -187,7 +199,14 @@ export function EditGradeContractDialog({
     // Build category requirements array from state
     const categoryReqs: CategoryRequirement[] = Object.entries(categoryRequirements)
       .filter(([_, required]) => required !== null && required > 0)
-      .map(([category, required]) => ({ category, required: required as number }));
+      .map(([category, required]) => {
+        const minAvg = categoryMinAverages[category];
+        return {
+          category,
+          required: required as number,
+          ...(minAvg != null && minAvg > 0 ? { minAverage: minAvg } : {}),
+        };
+      });
 
     const formData: ContractUpdatePayload = {
       grade: values.grade,
@@ -386,7 +405,7 @@ export function EditGradeContractDialog({
                     Leave blank to require all selected assignments in that category.
                   </p>
                 </div>
-                {selectedCategories.map(({ category, totalSelected }) => (
+                {selectedCategories.map(({ category, totalSelected, hasNumeric }) => (
                   <div key={category} className="flex items-center gap-4">
                     <div className="flex-1">
                       <p className="text-sm font-medium">{category}</p>
@@ -411,6 +430,27 @@ export function EditGradeContractDialog({
                         }}
                       />
                       <span className="text-sm text-muted-foreground">required</span>
+                      {hasNumeric && (
+                        <>
+                          <Input
+                            type="number"
+                            min="0"
+                            max="4"
+                            step="0.1"
+                            placeholder="—"
+                            className="w-20"
+                            value={categoryMinAverages[category] ?? ""}
+                            onChange={(e) => {
+                              const value = e.target.value ? parseFloat(e.target.value) : null;
+                              setCategoryMinAverages(prev => ({
+                                ...prev,
+                                [category]: value
+                              }));
+                            }}
+                          />
+                          <span className="text-sm text-muted-foreground">min avg</span>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}

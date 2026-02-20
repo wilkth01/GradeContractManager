@@ -827,10 +827,32 @@ export default function ClassManagement() {
                                               );
                                               const totalInGroup = groupItems.length;
 
+                                              // Check for minAverage requirement
+                                              const categoryReq = (contract as any).categoryRequirements?.find((cr: any) => cr.category === groupName);
+                                              const minAverage = categoryReq?.minAverage;
+                                              const groupAverage = minAverage != null ? (() => {
+                                                const grades = groupItems.map(({ assignment }) => {
+                                                  const progress = studentProgress.find(p => p.assignmentId === assignment.id);
+                                                  return progress?.numericGrade ? parseFloat(progress.numericGrade) : 0;
+                                                });
+                                                return grades.reduce((sum, g) => sum + g, 0) / grades.length;
+                                              })() : 0;
+
                                               return (
                                                 <div key={groupName} className="border-l-2 border-blue-200 pl-3">
                                                   <div className="flex items-center justify-between mb-2">
-                                                    <span className="font-medium text-sm text-[#0072BC]">{groupName}</span>
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="font-medium text-sm text-[#0072BC]">{groupName}</span>
+                                                      {minAverage != null && (
+                                                        <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                                          groupAverage >= minAverage
+                                                            ? "bg-green-100 text-green-700"
+                                                            : "bg-amber-100 text-amber-700"
+                                                        }`}>
+                                                          Avg: {groupAverage.toFixed(1)} / {minAverage} required
+                                                        </span>
+                                                      )}
+                                                    </div>
                                                     <div className="flex items-center gap-3 text-xs">
                                                       <span className="flex items-center gap-1">
                                                         <CheckCircle2 className="h-3 w-3 text-green-600" />
