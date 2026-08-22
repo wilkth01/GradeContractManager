@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useParams, useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Class, Assignment, User, AssignmentProgress, StudentContract, GradeContract } from "@shared/schema";
+import { Class, Assignment, User, StudentContract, GradeContract } from "@shared/schema";
 import { AssignmentStatus, getAssignmentStatusLabel } from "@shared/constants";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,10 +27,9 @@ interface ClassAnalytics {
     assignment: Assignment;
     completionRate: number;
     statusBreakdown: {
-      notStarted: number;
-      inProgress: number;
-      completed: number;
-      excellent: number;
+      missing: number;
+      workInProgress: number;
+      complete: number;
     };
   }[];
   studentPerformance: {
@@ -84,10 +83,9 @@ export default function ClassAnalytics() {
 
   const getStatusColor = (status: number): string => {
     switch (status) {
-      case AssignmentStatus.EXCELLENT: return "bg-green-200 text-green-800";
-      case AssignmentStatus.COMPLETED: return "bg-yellow-200 text-yellow-800";
-      case AssignmentStatus.NOT_STARTED:
-      case AssignmentStatus.IN_PROGRESS:
+      case AssignmentStatus.COMPLETE: return "bg-green-200 text-green-800";
+      case AssignmentStatus.WORK_IN_PROGRESS: return "bg-yellow-200 text-yellow-800";
+      case AssignmentStatus.MISSING:
       default: return "bg-slate-200 text-slate-700";
     }
   };
@@ -198,15 +196,15 @@ export default function ClassAnalytics() {
                       
                       <div className="grid grid-cols-3 gap-4">
                         <div className="text-center p-3 bg-slate-100 rounded-lg">
-                          <div className="text-2xl font-bold text-slate-700">{stat.statusBreakdown.notStarted + stat.statusBreakdown.inProgress}</div>
+                          <div className="text-2xl font-bold text-slate-700">{stat.statusBreakdown.missing}</div>
                           <div className="text-sm text-muted-foreground">Not Submitted</div>
                         </div>
                         <div className="text-center p-3 bg-yellow-100 rounded-lg">
-                          <div className="text-2xl font-bold text-yellow-700">{stat.statusBreakdown.completed}</div>
+                          <div className="text-2xl font-bold text-yellow-700">{stat.statusBreakdown.workInProgress}</div>
                           <div className="text-sm text-muted-foreground">Work-in-Progress</div>
                         </div>
                         <div className="text-center p-3 bg-green-100 rounded-lg">
-                          <div className="text-2xl font-bold text-green-700">{stat.statusBreakdown.excellent}</div>
+                          <div className="text-2xl font-bold text-green-700">{stat.statusBreakdown.complete}</div>
                           <div className="text-sm text-muted-foreground">Successfully Completed</div>
                         </div>
                       </div>

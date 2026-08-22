@@ -13,7 +13,9 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 const setupPasswordSchema = z.object({
-  username: z.string().min(3, "Username must be at least 3 characters"),
+  // Optional: an invitation for an account that already exists (a roster
+  // imported from Canvas) carries its own username.
+  username: z.string().optional(),
   password: z.string().min(6, "Password must be at least 6 characters"),
   confirmPassword: z.string().min(6, "Please confirm your password"),
 }).refine((data) => data.password === data.confirmPassword, {
@@ -27,6 +29,8 @@ interface InvitationData {
   email: string;
   fullName: string;
   token: string;
+  /** Set when the invitation belongs to an existing account. */
+  username: string | null;
 }
 
 export default function SetupAccountPage() {
@@ -67,10 +71,10 @@ export default function SetupAccountPage() {
       const response = await apiRequest("GET", `/api/invitations/${token}`);
       const data = await response.json();
       setInvitation(data);
-      
-      // Pre-fill username with email prefix
-      const suggestedUsername = data.email.split('@')[0];
-      form.setValue('username', suggestedUsername);
+
+      // An invitation bound to an account keeps that account's username;
+      // otherwise suggest one from the email.
+      form.setValue("username", data.username ?? data.email.split("@")[0]);
     } catch (error) {
       setError("Invalid or expired invitation link");
     } finally {
@@ -86,7 +90,8 @@ export default function SetupAccountPage() {
 
     try {
       await apiRequest("POST", `/api/invitations/${token}/setup`, {
-        username: data.username,
+        // The server ignores this when the invitation names an account.
+        username: invitation?.username ?? data.username,
         password: data.password,
       });
 
@@ -197,11 +202,15 @@ export default function SetupAccountPage() {
 
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="username">Choose Username</Label>
+              <Label htmlFor="username">
+                {invitation?.username ? "Your Username" : "Choose Username"}
+              </Label>
               <Input
                 id="username"
                 {...form.register("username")}
                 placeholder="Your username"
+                readOnly={!!invitation?.username}
+                aria-describedby={invitation?.username ? "username-note" : undefined}
                 disabled={isSubmitting}
               />
               {form.formState.errors.username && (

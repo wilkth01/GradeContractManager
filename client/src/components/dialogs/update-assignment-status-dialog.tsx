@@ -4,6 +4,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Assignment, AssignmentProgress } from "@shared/schema";
 import {
+  AssignmentStatus,
+  getAssignmentStatusLabel,
+  MAX_NUMERIC_GRADE,
+} from "@shared/constants";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -77,12 +82,7 @@ export function UpdateAssignmentStatusDialog({ classId, studentId, assignment, c
       );
       return res.json();
     },
-    onSuccess: (updatedProgress) => {
-      console.log("Progress updated successfully:", updatedProgress);
-      console.log("Invalidating cache keys:");
-      console.log(`- /api/classes/${classId}/students/progress`);
-      console.log(`- /api/classes/${classId}/students/${studentId}/progress`);
-      
+    onSuccess: () => {
       // Invalidate all progress queries to update both instructor and student views
       queryClient.invalidateQueries({
         queryKey: [`/api/classes/${classId}/students/progress`],
@@ -143,9 +143,15 @@ export function UpdateAssignmentStatusDialog({ classId, studentId, assignment, c
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="0">Not Submitted</SelectItem>
-                        <SelectItem value="2">Work-in-Progress</SelectItem>
-                        <SelectItem value="3">Successfully Completed</SelectItem>
+                        <SelectItem value={String(AssignmentStatus.MISSING)}>
+                          {getAssignmentStatusLabel(AssignmentStatus.MISSING)}
+                        </SelectItem>
+                        <SelectItem value={String(AssignmentStatus.WORK_IN_PROGRESS)}>
+                          {getAssignmentStatusLabel(AssignmentStatus.WORK_IN_PROGRESS)}
+                        </SelectItem>
+                        <SelectItem value={String(AssignmentStatus.COMPLETE)}>
+                          {getAssignmentStatusLabel(AssignmentStatus.COMPLETE)}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -158,12 +164,12 @@ export function UpdateAssignmentStatusDialog({ classId, studentId, assignment, c
                 name="numericGrade"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Score (0-4)</FormLabel>
+                    <FormLabel>Score (0-{MAX_NUMERIC_GRADE})</FormLabel>
                     <FormControl>
                       <Input
                         type="number"
                         min="0"
-                        max="4"
+                        max={MAX_NUMERIC_GRADE}
                         step="0.1"
                         placeholder="Enter score"
                         {...field}

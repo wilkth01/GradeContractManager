@@ -1,11 +1,23 @@
 import { useAuth } from "@/hooks/use-auth";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Class, Assignment, GradeContract, AssignmentProgress } from "@shared/schema";
+import { Class, Assignment, GradeContract, AssignmentProgress, CategoryRequirement, SessionParticipation, StudentAbsences } from "@shared/schema";
 
-type CategoryRequirement = { category: string; required: number; minAverage?: number };
 type GradeContractWithCategories = GradeContract & { categoryRequirements?: CategoryRequirement[] | null };
-import { AssignmentStatus } from "@shared/constants";
+import {
+  getAssignmentDisplayState,
+  getDisplayStateLabel,
+  isOverAbsenceLimit,
+  meetsParticipationBar,
+  getParticipationLabel,
+  DEFAULT_PARTICIPATION_BAR,
+} from "@shared/constants";
+import {
+  computeCategoryAverage,
+  isPastDue,
+  evaluateStanding,
+  formatAbsences,
+} from "@shared/contract-evaluation";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -22,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, CheckCircle2, XCircle, Circle, ArrowLeft, Target, AlertTriangle } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, Circle, ArrowLeft, AlertTriangle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
 
@@ -69,15 +81,15 @@ export default function StudentClassView() {
     enabled: !isNaN(parsedClassId) && !!assignments && !!user,
   });
 
-  // Fetch student's engagement intentions for this class
-  const { data: engagementIntentions } = useQuery({
-    queryKey: [`/api/classes/${parsedClassId}/students/${user?.id}/engagement-intentions`],
+  // Fetch student's attendance records for this class
+  const { data: participationRecords } = useQuery<SessionParticipation[]>({
+    queryKey: [`/api/classes/${parsedClassId}/students/${user?.id}/participation`],
     enabled: !isNaN(parsedClassId) && !!user,
   });
 
-  // Fetch student's attendance records for this class
-  const { data: attendanceRecords } = useQuery({
-    queryKey: [`/api/classes/${parsedClassId}/students/${user?.id}/attendance`],
+  // Absences come from Qwickly by way of Canvas, so this is a single total.
+  const { data: absenceRecord } = useQuery<StudentAbsences | null>({
+    queryKey: [`/api/classes/${parsedClassId}/students/${user?.id}/absences`],
     enabled: !isNaN(parsedClassId) && !!user,
   });
 
@@ -164,6 +176,36 @@ export default function StudentClassView() {
     ? contracts.find(c => c.id === studentContract.contractId)
     : null;
 
+  const absenceCount = Number(absenceRecord?.absences ?? 0);
+  const participationCount = (participationRecords ?? []).filter(r =>
+    meetsParticipationBar(r.participation, classData.participationBar)
+  ).length;
+  const maxAbsences = currentContract?.maxAbsences ?? 0;
+  const overAbsenceLimit = isOverAbsenceLimit(absenceCount, maxAbsences);
+  const requiredParticipation = currentContract?.requiredParticipationSessions ?? 0;
+
+  // One evaluation, shared with the instructor roster and the progress
+  // messages, so a student is never told two different things.
+  const standing = evaluateStanding({
+    contracts: (contracts ?? []).map(c => ({
+      id: c.id,
+      grade: c.grade,
+      assignments: c.assignments,
+      categoryRequirements: c.categoryRequirements,
+      requiredParticipationSessions: c.requiredParticipationSessions,
+      maxAbsences: c.maxAbsences,
+    })),
+    chosenContractId: studentContract?.contractId ?? null,
+    assignments: assignments ?? [],
+    progress: studentProgress ?? [],
+    participationSessions: participationCount,
+    absences: absenceCount,
+    policy: {
+      absencePenaltyThreshold: classData.absencePenaltyThreshold,
+      absenceFailureThreshold: classData.absenceFailureThreshold,
+    },
+  });
+
   return (
     <div className="min-h-screen bg-background">
       {/* Skip link for accessibility */}
@@ -185,27 +227,87 @@ export default function StudentClassView() {
               Back to Dashboard
             </Button>
           </nav>
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-4xl font-bold mb-2">{classData.name}</h1>
-              <p className="text-lg opacity-90">Your Contract and Progress</p>
-            </div>
-            <Button
-              variant="secondary"
-              size="lg"
-              className="text-base"
-              onClick={() => setLocation(`/student/class/${parsedClassId}/engagement`)}
-              aria-label="View engagement tracking for this class"
-            >
-              <Target className="h-5 w-5 mr-2" />
-              Engagement Tracking
-            </Button>
+          <div>
+            <h1 className="text-4xl font-bold mb-2">{classData.name}</h1>
+            <p className="text-lg opacity-90">Your Contract and Progress</p>
           </div>
         </div>
       </header>
 
       <main id="main-content" className="container mx-auto py-8" role="main">
         <div className="space-y-8">
+          {/* Where you currently stand. This is the question the whole app
+              exists to answer, so it goes first. */}
+          {currentContract && (
+            <section aria-labelledby="standing-heading">
+              <Card className={`border-2 ${
+                standing.chosen?.met
+                  ? "border-green-500 bg-green-50/40 dark:bg-green-950/20"
+                  : "border-amber-500 bg-amber-50/40 dark:bg-amber-950/20"
+              }`}>
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <CardTitle id="standing-heading" className="text-2xl font-bold">
+                        {standing.chosen?.met
+                          ? `You are meeting your Grade ${currentContract.grade} contract`
+                          : `Not yet meeting your Grade ${currentContract.grade} contract`}
+                      </CardTitle>
+                      <CardDescription className="text-base mt-1">
+                        {standing.penalty === "failure" ? (
+                          <span className="text-red-700 font-semibold">
+                            {formatAbsences(absenceCount)} absences means automatic failure under
+                            this course's attendance policy. Please speak with your instructor.
+                          </span>
+                        ) : standing.highestMet ? (
+                          <>
+                            On your current record you are earning a{" "}
+                            <strong>{standing.effectiveGrade}</strong>
+                            {standing.penalty === "letter-reduction" && (
+                              <span className="text-red-700">
+                                {" "}(reduced one letter from {standing.highestMet} for{" "}
+                                {formatAbsences(absenceCount)} absences)
+                              </span>
+                            )}
+                            .
+                          </>
+                        ) : (
+                          "You are not currently meeting any grade contract in this class."
+                        )}
+                      </CardDescription>
+                    </div>
+                    {standing.chosen?.met ? (
+                      <CheckCircle2 className="h-10 w-10 text-green-600 flex-shrink-0" />
+                    ) : (
+                      <AlertTriangle className="h-10 w-10 text-amber-600 flex-shrink-0" />
+                    )}
+                  </div>
+                </CardHeader>
+                {(standing.chosen?.actionable.length || standing.chosen?.informational.length) ? (
+                  <CardContent className="space-y-3">
+                    {standing.chosen!.actionable.length > 0 && (
+                      <div>
+                        <h3 className="font-semibold mb-1">
+                          To meet your Grade {currentContract.grade} contract:
+                        </h3>
+                        <ul className="list-disc list-inside space-y-1 text-base">
+                          {standing.chosen!.actionable.map((item, i) => (
+                            <li key={i}>{item.charAt(0).toUpperCase() + item.slice(1)}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {standing.chosen!.informational.length > 0 && (
+                      <p className="text-sm text-muted-foreground">
+                        Also worth knowing: {standing.chosen!.informational.join("; ")}.
+                      </p>
+                    )}
+                  </CardContent>
+                ) : null}
+              </Card>
+            </section>
+          )}
+
           {/* Class Description */}
           {classData.description && (
             <section aria-labelledby="course-info-heading">
@@ -273,52 +375,52 @@ export default function StudentClassView() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {/* Engagement Intentions Requirements */}
-                    {(currentContract.requiredEngagementIntentions || 0) > 0 && (
-                      <div className="border-l-4 border-[#0072BC] pl-4 mb-6">
-                        <h3 className="text-lg font-semibold text-[#0072BC] mb-2">Engagement Requirements</h3>
-                        <div className="flex items-center space-x-4">
-                          <div className="text-sm">
-                            <span className="font-medium">
-                              {Array.isArray(engagementIntentions) ? engagementIntentions.filter((intention: any) => intention.isFulfilled).length : 0}
-                            </span>
-                            <span className="text-muted-foreground"> / </span>
-                            <span className="font-medium">{currentContract.requiredEngagementIntentions || 0}</span>
-                            <span className="text-muted-foreground"> fulfilled engagement intentions</span>
-                          </div>
-                          <div className="flex-1">
-                            <div className="bg-gray-200 rounded-full h-2">
-                              <div 
-                                className="bg-[#0072BC] h-2 rounded-full transition-all duration-300"
-                                style={{ 
-                                  width: `${Math.min(100, (Array.isArray(engagementIntentions) ? engagementIntentions.filter((intention: any) => intention.isFulfilled).length : 0) / (currentContract.requiredEngagementIntentions || 1) * 100)}%` 
-                                }}
-                              />
-                            </div>
+                    {/* Attendance and participation, both recorded per class session */}
+                    <div className="border-l-4 border-red-500 pl-4 mb-6">
+                      <h3 className="text-lg font-semibold text-red-700 mb-2">Attendance</h3>
+                      <div className="flex items-center space-x-4">
+                        <div className="text-sm">
+                          <span className={overAbsenceLimit ? "font-medium text-red-700" : "font-medium"}>
+                            {absenceCount}
+                          </span>
+                          <span className="text-muted-foreground"> / </span>
+                          <span className="font-medium">{maxAbsences}</span>
+                          <span className="text-muted-foreground"> absences allowed</span>
+                          <span className="text-muted-foreground">
+                            {" "}(from Qwickly; a late arrival counts as half)
+                          </span>
+                        </div>
+                        <div className="flex-1">
+                          <div className="bg-gray-200 rounded-full h-2">
+                            <div
+                              className="h-2 rounded-full transition-all duration-300 bg-red-600"
+                              style={{
+                                width: `${Math.min(100, (absenceCount / Math.max(1, maxAbsences)) * 100)}%`,
+                              }}
+                            />
                           </div>
                         </div>
                       </div>
-                    )}
+                    </div>
 
-                    {/* Attendance Requirements */}
-                    {(currentContract.maxAbsences || 0) >= 0 && (
-                      <div className="border-l-4 border-red-500 pl-4 mb-6">
-                        <h3 className="text-lg font-semibold text-red-700 mb-2">Attendance Requirements</h3>
+                    {requiredParticipation > 0 && (
+                      <div className="border-l-4 border-[#0072BC] pl-4 mb-6">
+                        <h3 className="text-lg font-semibold text-[#0072BC] mb-2">Participation</h3>
                         <div className="flex items-center space-x-4">
                           <div className="text-sm">
-                            <span className="font-medium">
-                              {Array.isArray(attendanceRecords) ? attendanceRecords.filter((record: any) => !record.isPresent).length : 0}
-                            </span>
+                            <span className="font-medium">{participationCount}</span>
                             <span className="text-muted-foreground"> / </span>
-                            <span className="font-medium">{currentContract.maxAbsences || 0}</span>
-                            <span className="text-muted-foreground"> absences allowed</span>
+                            <span className="font-medium">{requiredParticipation}</span>
+                            <span className="text-muted-foreground">
+                              {" "}sessions at {getParticipationLabel(classData.participationBar ?? DEFAULT_PARTICIPATION_BAR)} or above
+                            </span>
                           </div>
                           <div className="flex-1">
                             <div className="bg-gray-200 rounded-full h-2">
-                              <div 
-                                className="h-2 rounded-full transition-all duration-300 bg-red-600"
-                                style={{ 
-                                  width: `${Math.min(100, (Array.isArray(attendanceRecords) ? attendanceRecords.filter((record: any) => !record.isPresent).length : 0) / Math.max(1, currentContract.maxAbsences || 1) * 100)}%` 
+                              <div
+                                className="bg-[#0072BC] h-2 rounded-full transition-all duration-300"
+                                style={{
+                                  width: `${Math.min(100, (participationCount / requiredParticipation) * 100)}%`,
                                 }}
                               />
                             </div>
@@ -349,7 +451,7 @@ export default function StudentClassView() {
                           const groupStats = groupAssignments.reduce(
                             (stats, { assignment }) => {
                               const progress = studentProgress?.find(p => p.assignmentId === assignment.id);
-                              const status = getAssignmentStatus(assignment, progress);
+                              const status = getAssignmentDisplayState(assignment.scoringType, progress);
                               if (status === "completed") stats.completed++;
                               else if (status === "in-progress") stats.inProgress++;
                               else stats.notSubmitted++;
@@ -361,19 +463,22 @@ export default function StudentClassView() {
 
                           // Check if there's a category requirement for this group
                           const categoryReq = currentContract.categoryRequirements?.find(cr => cr.category === group);
-                          const requiredCount = categoryReq?.required || totalInGroup;
-                          const countMet = groupStats.completed >= requiredCount;
+                          const requiredCount = categoryReq?.required ?? 0;
+                          const hasCountRequirement = requiredCount > 0;
+                          const countMet = !hasCountRequirement || groupStats.completed >= requiredCount;
 
                           // Calculate average for numeric assignments in this group
                           const minAverage = categoryReq && 'minAverage' in categoryReq ? categoryReq.minAverage : undefined;
-                          const computeGroupAverage = () => {
-                            const grades = groupAssignments.map(({ assignment }) => {
-                              const progress = studentProgress?.find(p => p.assignmentId === assignment.id);
-                              return progress?.numericGrade ? parseFloat(progress.numericGrade) : 0;
-                            });
-                            return grades.reduce((sum, g) => sum + g, 0) / grades.length;
-                          };
-                          const groupAverage = minAverage != null ? computeGroupAverage() : 0;
+                          // Ungraded work is left out until it is past due, so the
+                          // average reflects work actually done rather than reading
+                          // as failing until every assignment is graded.
+                          const averageStats = computeCategoryAverage(
+                            groupAssignments.map(({ assignment }) => ({
+                              numericGrade: studentProgress?.find(p => p.assignmentId === assignment.id)?.numericGrade,
+                              dueDate: assignment.dueDate,
+                            }))
+                          );
+                          const groupAverage = averageStats.average;
                           const averageMet = minAverage != null ? groupAverage >= minAverage : true;
                           const categoryMet = countMet && averageMet;
 
@@ -398,13 +503,17 @@ export default function StudentClassView() {
                                     <div className="space-y-4">
                                       <div className="flex items-center justify-between">
                                         <div className={`px-4 py-3 rounded-md border text-lg font-semibold ${
-                                          averageMet
-                                            ? "bg-green-50 border-green-200 text-green-700"
-                                            : "bg-amber-50 border-amber-200 text-amber-700"
+                                          averageStats.isEmpty
+                                            ? "bg-gray-50 border-gray-200 text-gray-600"
+                                            : averageMet
+                                              ? "bg-green-50 border-green-200 text-green-700"
+                                              : "bg-amber-50 border-amber-200 text-amber-700"
                                         }`}>
-                                          Average: {groupAverage.toFixed(1)} / {minAverage} required
+                                          {averageStats.isEmpty
+                                            ? `Nothing graded yet - ${minAverage} average required`
+                                            : `Average: ${groupAverage.toFixed(1)} / ${minAverage} required`}
                                         </div>
-                                        {averageMet ? (
+                                        {averageStats.isEmpty ? null : averageMet ? (
                                           <CheckCircle2 className="h-8 w-8 text-green-600" />
                                         ) : (
                                           <AlertTriangle className="h-8 w-8 text-amber-600" />
@@ -425,7 +534,15 @@ export default function StudentClassView() {
                                         </div>
                                       </div>
                                       <p className="text-sm text-muted-foreground">
-                                        Based on {totalInGroup} assignment{totalInGroup !== 1 ? "s" : ""} in this group
+                                        {averageStats.isEmpty
+                                          ? `${totalInGroup} assignment${totalInGroup !== 1 ? "s" : ""} in this group, none graded yet`
+                                          : `Based on ${averageStats.graded} graded assignment${averageStats.graded !== 1 ? "s" : ""}` +
+                                            (averageStats.missed > 0
+                                              ? ` and ${averageStats.missed} past due with no grade (counted as 0)`
+                                              : "") +
+                                            (averageStats.pending > 0
+                                              ? `. ${averageStats.pending} not yet due, so not counted.`
+                                              : ".")}
                                       </p>
                                     </div>
                                   </CardContent>
@@ -439,7 +556,7 @@ export default function StudentClassView() {
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                               <div className="flex items-center gap-2">
                                 <h4 id={`group-${group}`} className="font-bold text-xl text-[#0072BC]">{group}</h4>
-                                {categoryReq && (
+                                {hasCountRequirement && (
                                   <span className={`text-sm px-2 py-0.5 rounded-full ${
                                     categoryMet
                                       ? "bg-green-100 text-green-700"
@@ -472,11 +589,11 @@ export default function StudentClassView() {
                               <div className="flex h-2.5 rounded-full overflow-hidden">
                                 <div
                                   className="bg-green-600 h-2.5"
-                                  style={{ width: `${(groupStats.completed / (categoryReq ? requiredCount : totalInGroup)) * 100}%` }}
+                                  style={{ width: `${(groupStats.completed / (hasCountRequirement ? requiredCount : totalInGroup)) * 100}%` }}
                                 />
                                 <div
                                   className="bg-yellow-500 h-2.5"
-                                  style={{ width: `${(groupStats.inProgress / (categoryReq ? requiredCount : totalInGroup)) * 100}%` }}
+                                  style={{ width: `${(groupStats.inProgress / (hasCountRequirement ? requiredCount : totalInGroup)) * 100}%` }}
                                 />
                               </div>
                             </div>
@@ -485,8 +602,8 @@ export default function StudentClassView() {
                                 const progress = studentProgress?.find(
                                   p => p.assignmentId === assignment.id
                                 );
-                                const status = getAssignmentStatus(assignment, progress);
-                                const statusLabel = getStatusLabel(status, assignment, progress);
+                                const status = getAssignmentDisplayState(assignment.scoringType, progress);
+                                const statusLabel = getDisplayStateLabel(status);
 
                                 const pastDue = isPastDue(assignment.dueDate) && status !== "completed";
 
@@ -645,23 +762,6 @@ export default function StudentClassView() {
   );
 }
 
-const getAssignmentStatus = (assignment: Assignment, progress?: AssignmentProgress) => {
-  if (!progress) {
-    return "not-submitted";
-  }
-
-  if (assignment.scoringType === "status") {
-    switch (progress.status) {
-      case AssignmentStatus.EXCELLENT: return "completed";
-      case AssignmentStatus.COMPLETED: return "in-progress";
-      default: return "not-submitted";
-    }
-  } else {
-    if (!progress.numericGrade) return "not-submitted";
-    return "completed";
-  }
-};
-
 const getStatusIcon = (status: string) => {
   switch (status) {
     case "completed":
@@ -673,28 +773,6 @@ const getStatusIcon = (status: string) => {
     default:
       return <XCircle className="h-12 w-12 text-gray-400" aria-hidden="true" />;
   }
-};
-
-const getStatusLabel = (status: string, assignment?: Assignment, progress?: AssignmentProgress) => {
-  switch (status) {
-    case "completed":
-      return "Successfully Completed";
-    case "in-progress":
-      return "Work-in-Progress";
-    case "not-submitted":
-      return "Not Submitted";
-    default:
-      return "Not Submitted";
-  }
-};
-
-const isPastDue = (dueDate: Date | string | null | undefined): boolean => {
-  if (!dueDate) return false;
-  const due = typeof dueDate === "string" ? new Date(dueDate) : dueDate;
-  const now = new Date();
-  // Set to end of due date day for comparison
-  due.setHours(23, 59, 59, 999);
-  return now > due;
 };
 
 const formatDueDate = (dueDate: Date | string | null | undefined): string => {
