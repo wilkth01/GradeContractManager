@@ -35,7 +35,7 @@ export interface IStorage {
   publishContractVersion(
     previous: GradeContract,
     changes: Omit<GradeContract, "id" | "version">
-  ): Promise<{ contract: GradeContract; movedStudents: number; heldStudents: number }>;
+  ): Promise<{ contract: GradeContract; movedStudents: number }>;
 
   setStudentContract(contract: Omit<StudentContract, "id">): Promise<StudentContract>;
   getStudentContract(studentId: number, classId: number): Promise<StudentContract | undefined>;
@@ -261,48 +261,35 @@ export class DatabaseStorage implements IStorage {
   /**
    * Publish an edited contract as a new version.
    *
-   * Editing used to update the row in place, so a student who confirmed a Grade
-   * B contract in week 3 was silently held to a different Grade B contract in
-   * week 10. A contract that can be rewritten under the people who agreed to it
-   * is not a contract.
+   * Every student on the previous version moves to the new one, whether or not
+   * they had confirmed, and keeps their confirmation. The syllabus reserves the
+   * right to change a contract mid-semester and it is only ever exercised to
+   * reduce requirements, so applying the change to everyone is both what was
+   * agreed and what benefits students -- holding someone to superseded, stricter
+   * terms would be the harm here.
    *
-   * Students who have not confirmed move to the new version, since they have
-   * committed to nothing yet. Students who have confirmed stay on the exact
-   * terms they accepted until they choose again.
+   * The previous row is kept rather than overwritten, so there is a record of
+   * what the contract used to require if a student ever asks.
    */
   async publishContractVersion(
     previous: GradeContract,
     changes: Omit<GradeContract, "id" | "version">
-  ): Promise<{ contract: GradeContract; movedStudents: number; heldStudents: number }> {
+  ): Promise<{ contract: GradeContract; movedStudents: number }> {
     return db.transaction(async (tx) => {
       const [published] = await tx
         .insert(gradeContracts)
         .values({ ...changes, version: previous.version + 1 })
         .returning();
 
-      const onPrevious = await tx
-        .select()
-        .from(studentContracts)
-        .where(eq(studentContracts.contractId, previous.id));
+      // Only contractId changes; isConfirmed is left alone so nobody has to
+      // re-confirm a contract they already accepted.
+      const moved = await tx
+        .update(studentContracts)
+        .set({ contractId: published.id })
+        .where(eq(studentContracts.contractId, previous.id))
+        .returning();
 
-      const unconfirmed = onPrevious.filter((sc) => !sc.isConfirmed);
-      if (unconfirmed.length > 0) {
-        await tx
-          .update(studentContracts)
-          .set({ contractId: published.id })
-          .where(
-            and(
-              eq(studentContracts.contractId, previous.id),
-              eq(studentContracts.isConfirmed, false)
-            )
-          );
-      }
-
-      return {
-        contract: published,
-        movedStudents: unconfirmed.length,
-        heldStudents: onPrevious.length - unconfirmed.length,
-      };
+      return { contract: published, movedStudents: moved.length };
     });
   }
 

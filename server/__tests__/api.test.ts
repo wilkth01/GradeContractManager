@@ -903,7 +903,7 @@ describe("Canvas roster import", () => {
   });
 });
 
-describe("Contract immutability", () => {
+describe("Contract edits apply to everyone on that contract", () => {
   async function editContract(agent: any, classId: number, contractId: number, required: number) {
     return agent.patch(`/api/classes/${classId}/contracts/${contractId}`).send({
       grade: "A",
@@ -914,16 +914,15 @@ describe("Contract immutability", () => {
     });
   }
 
-  it("publishes an edit as a new version instead of rewriting the old one", async () => {
+  it("publishes an edit as a new version, keeping the old terms on record", async () => {
     const prof = instructor("prof");
     const cls = addClass(prof.id);
     const original = addContract(cls.id, { grade: "A", version: 1 });
     const agent = await loginAs(app, "prof", PASSWORD);
 
-    const res = await editContract(agent, cls.id, original.id, 9);
+    const res = await editContract(agent, cls.id, original.id, 3);
 
     expect(res.status).toBe(200);
-    expect(res.body.id).not.toBe(original.id);
     expect(res.body.version).toBe(2);
 
     const { db } = await import("./helpers/fakeStorage");
@@ -931,7 +930,7 @@ describe("Contract immutability", () => {
     expect(kept.categoryRequirements).toEqual(original.categoryRequirements);
   });
 
-  it("holds a confirmed student to the terms they agreed to", async () => {
+  it("moves a confirmed student onto the new terms without asking them", async () => {
     const prof = instructor("prof");
     const sam = student("sam");
     const cls = addClass(prof.id);
@@ -940,24 +939,43 @@ describe("Contract immutability", () => {
     enrollment.isConfirmed = true;
     const agent = await loginAs(app, "prof", PASSWORD);
 
-    const res = await editContract(agent, cls.id, original.id, 9);
+    const res = await editContract(agent, cls.id, original.id, 3);
 
-    expect(enrollment.contractId).toBe(original.id);
-    expect(res.body.heldStudents).toBe(1);
-    expect(res.body.movedStudents).toBe(0);
+    expect(enrollment.contractId).toBe(res.body.id);
+    expect(res.body.movedStudents).toBe(1);
   });
 
-  it("moves a student who has not confirmed onto the new version", async () => {
+  it("leaves a moved student still confirmed", async () => {
     const prof = instructor("prof");
     const sam = student("sam");
     const cls = addClass(prof.id);
     const original = addContract(cls.id, { grade: "A", version: 1 });
     const enrollment = enroll(cls.id, sam.id, original.id);
+    enrollment.isConfirmed = true;
     const agent = await loginAs(app, "prof", PASSWORD);
 
-    const res = await editContract(agent, cls.id, original.id, 9);
+    await editContract(agent, cls.id, original.id, 3);
 
-    expect(enrollment.contractId).toBe(res.body.id);
-    expect(res.body.movedStudents).toBe(1);
+    // Re-confirming would be an action on the student's part, which is exactly
+    // what this must not require.
+    expect(enrollment.isConfirmed).toBe(true);
+  });
+
+  it("moves unconfirmed students too", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const alex = student("alex");
+    const cls = addClass(prof.id);
+    const original = addContract(cls.id, { grade: "A", version: 1 });
+    const first = enroll(cls.id, sam.id, original.id);
+    const second = enroll(cls.id, alex.id, original.id);
+    second.isConfirmed = true;
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await editContract(agent, cls.id, original.id, 3);
+
+    expect(res.body.movedStudents).toBe(2);
+    expect(first.contractId).toBe(res.body.id);
+    expect(second.contractId).toBe(res.body.id);
   });
 });

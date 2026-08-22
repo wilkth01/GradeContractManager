@@ -253,16 +253,11 @@ const contractStorage = {
     });
 
     const onPrevious = db.studentContracts.filter((sc) => sc.contractId === previous.id);
-    const unconfirmed = onPrevious.filter((sc) => !sc.isConfirmed);
-    for (const enrollment of unconfirmed) {
+    for (const enrollment of onPrevious) {
       enrollment.contractId = published.id;
     }
 
-    return {
-      contract: published,
-      movedStudents: unconfirmed.length,
-      heldStudents: onPrevious.length - unconfirmed.length,
-    };
+    return { contract: published, movedStudents: onPrevious.length };
   },
 
   async getStudentContract(studentId: number, classId: number) {

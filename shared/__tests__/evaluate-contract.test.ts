@@ -391,16 +391,23 @@ describe("everything is per-course", () => {
 });
 
 describe("contract versions", () => {
+  // The syllabus reserves the right to change a contract mid-semester, and it is
+  // only used to reduce requirements, so a change applies to everyone on that
+  // contract with no action from them.
   const v1: EvaluationContract = {
     id: 10,
     grade: "A",
     version: 1,
     assignments: discussionLogs.map((a) => ({ id: a.id })),
-    categoryRequirements: [{ category: "Discussion Logs", required: 3 }],
+    categoryRequirements: [{ category: "Discussion Logs", required: 9 }],
     maxAbsences: 5,
   };
-  const v2: EvaluationContract = { ...v1, id: 11, version: 2,
-    categoryRequirements: [{ category: "Discussion Logs", required: 9 }] };
+  const v2: EvaluationContract = {
+    ...v1,
+    id: 11,
+    version: 2,
+    categoryRequirements: [{ category: "Discussion Logs", required: 3 }],
+  };
 
   const base = {
     assignments: allAssignments,
@@ -410,22 +417,21 @@ describe("contract versions", () => {
     now: NOW,
   };
 
-  it("measures an unconfirmed student against the current version", () => {
+  it("applies a reduced requirement to a student already on the new version", () => {
     const standing = evaluateStanding({ ...base, contracts: [v1, v2], chosenContractId: 11 });
 
-    // v2 needs 9 logs; four is short.
-    expect(standing.chosen?.contractId).toBe(11);
-    expect(standing.chosen?.met).toBe(false);
-    expect(standing.highestMet).toBeNull();
-  });
-
-  it("holds a confirmed student to the version they agreed to", () => {
-    // Still pointing at v1, which only needed 3 logs.
-    const standing = evaluateStanding({ ...base, contracts: [v1, v2], chosenContractId: 10 });
-
-    expect(standing.chosen?.contractId).toBe(10);
+    // v2 asks for 3 logs; four clears it.
     expect(standing.chosen?.met).toBe(true);
     expect(standing.highestMet).toBe("A");
+  });
+
+  it("gives a student still pointing at the old row the current terms", () => {
+    // Nobody should be left on a superseded row, but if one is, the terms in
+    // force are the reduced ones -- not the stricter ones they replaced.
+    const standing = evaluateStanding({ ...base, contracts: [v1, v2], chosenContractId: 10 });
+
+    expect(standing.chosen?.contractId).toBe(11);
+    expect(standing.chosen?.met).toBe(true);
   });
 
   it("does not evaluate the same grade twice when versions accumulate", () => {

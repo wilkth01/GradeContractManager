@@ -83,8 +83,8 @@ router.patch(
       throw new BadRequestError("Invalid grade contract data");
     }
 
-    // Published as a new version rather than edited in place, so students who
-    // already confirmed keep the terms they agreed to.
+    // Published as a new version so the previous terms stay on record, but it
+    // applies to everyone on that contract immediately -- no student action.
     const result = await storage.publishContractVersion(contract, {
       classId: req.cls!.id,
       grade: parsed.data.grade,
@@ -94,11 +94,7 @@ router.patch(
       categoryRequirements: parsed.data.categoryRequirements ?? null,
     });
 
-    res.json({
-      ...result.contract,
-      movedStudents: result.movedStudents,
-      heldStudents: result.heldStudents,
-    });
+    res.json({ ...result.contract, movedStudents: result.movedStudents });
   })
 );
 

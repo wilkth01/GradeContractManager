@@ -160,13 +160,17 @@ export function EditGradeContractDialog({
       );
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (result: { movedStudents?: number }) => {
       queryClient.invalidateQueries({
         queryKey: [`/api/classes/${classId}/contracts`],
       });
+      const moved = result?.movedStudents ?? 0;
       toast({
-        title: "Success",
-        description: "Grade contract updated successfully",
+        title: "Contract updated",
+        description:
+          moved > 0
+            ? `The new terms now apply to ${moved} student${moved === 1 ? "" : "s"} on this contract.`
+            : "No students are on this contract yet.",
       });
       setOpen(false);
       form.reset();
@@ -254,7 +258,9 @@ export function EditGradeContractDialog({
         <DialogHeader>
           <DialogTitle>Edit Grade Contract</DialogTitle>
           <DialogDescription>
-            Update requirements for this grade level
+            Update requirements for this grade level. Saving applies the new terms
+            immediately to everyone who selected this contract, including students who
+            have already confirmed. The previous version is kept on record.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
