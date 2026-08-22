@@ -902,3 +902,62 @@ describe("Canvas roster import", () => {
     expect(res.body.sent).toEqual([]);
   });
 });
+
+describe("Contract immutability", () => {
+  async function editContract(agent: any, classId: number, contractId: number, required: number) {
+    return agent.patch(`/api/classes/${classId}/contracts/${contractId}`).send({
+      grade: "A",
+      version: 1,
+      assignments: [],
+      maxAbsences: 2,
+      categoryRequirements: [{ category: "Discussion Logs", required }],
+    });
+  }
+
+  it("publishes an edit as a new version instead of rewriting the old one", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const original = addContract(cls.id, { grade: "A", version: 1 });
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await editContract(agent, cls.id, original.id, 9);
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).not.toBe(original.id);
+    expect(res.body.version).toBe(2);
+
+    const { db } = await import("./helpers/fakeStorage");
+    const kept = db.gradeContracts.find((c) => c.id === original.id)!;
+    expect(kept.categoryRequirements).toEqual(original.categoryRequirements);
+  });
+
+  it("holds a confirmed student to the terms they agreed to", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    const original = addContract(cls.id, { grade: "A", version: 1 });
+    const enrollment = enroll(cls.id, sam.id, original.id);
+    enrollment.isConfirmed = true;
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await editContract(agent, cls.id, original.id, 9);
+
+    expect(enrollment.contractId).toBe(original.id);
+    expect(res.body.heldStudents).toBe(1);
+    expect(res.body.movedStudents).toBe(0);
+  });
+
+  it("moves a student who has not confirmed onto the new version", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    const original = addContract(cls.id, { grade: "A", version: 1 });
+    const enrollment = enroll(cls.id, sam.id, original.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await editContract(agent, cls.id, original.id, 9);
+
+    expect(enrollment.contractId).toBe(res.body.id);
+    expect(res.body.movedStudents).toBe(1);
+  });
+});

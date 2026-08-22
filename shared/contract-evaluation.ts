@@ -135,6 +135,8 @@ export interface EvaluationProgress {
 export interface EvaluationContract {
   id: number;
   grade: string;
+  /** Higher supersedes lower for the same grade. */
+  version?: number;
   assignments: { id: number; comments?: string; minPoints?: number }[];
   categoryRequirements?: CategoryRequirement[] | null;
   requiredParticipationSessions?: number | null;
@@ -390,6 +392,38 @@ export function reduceGrade(grade: string): string {
   return GRADE_ORDER[Math.min(index + 1, GRADE_ORDER.length - 1)];
 }
 
+/**
+ * The contracts a standing should be measured against.
+ *
+ * Editing a contract publishes a new version rather than rewriting the old one,
+ * so a class accumulates superseded rows. Only the current version of each grade
+ * is on offer -- but a student who confirmed an earlier version is still held to
+ * it, so their own contract is always included even once superseded.
+ */
+export function currentContracts(
+  contracts: EvaluationContract[],
+  chosenContractId?: number | null
+): EvaluationContract[] {
+  const latestByGrade = new Map<string, EvaluationContract>();
+
+  for (const contract of contracts) {
+    const existing = latestByGrade.get(contract.grade);
+    if (!existing || (contract.version ?? 0) > (existing.version ?? 0)) {
+      latestByGrade.set(contract.grade, contract);
+    }
+  }
+
+  const current = Array.from(latestByGrade.values());
+  const chosen = contracts.find((c) => c.id === chosenContractId);
+
+  if (chosen && !current.some((c) => c.id === chosen.id)) {
+    // Their confirmed version was superseded; replace the newer row for that
+    // grade so they are measured against what they actually agreed to.
+    return current.map((c) => (c.grade === chosen.grade ? chosen : c));
+  }
+  return current;
+}
+
 export interface StandingInput {
   /** Every contract offered in the class. */
   contracts: EvaluationContract[];
@@ -426,7 +460,9 @@ export interface Standing {
  * for a B -- which is the thing they most need to know.
  */
 export function evaluateStanding(input: StandingInput): Standing {
-  const ordered = [...input.contracts].sort(
+  const considered = currentContracts(input.contracts, input.chosenContractId);
+
+  const ordered = [...considered].sort(
     (a, b) => GRADE_ORDER.indexOf(a.grade) - GRADE_ORDER.indexOf(b.grade)
   );
 

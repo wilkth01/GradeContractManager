@@ -3,15 +3,12 @@ import { storage } from "../storage";
 import { toPublicUser } from "../auth";
 import { requireClassOwner } from "../middleware";
 import { asyncHandler } from "../errors";
-import { AssignmentStatus, isAssignmentDone } from "@shared/constants";
+import { AssignmentStatus, isAssignmentDone, meetsParticipationBar } from "@shared/constants";
+import { evaluateStanding } from "@shared/contract-evaluation";
 
 const router = Router();
 
-// Class-wide analytics.
-// TODO(phase 4): completion is measured against every assignment in the class
-// and "at risk" is a flat 60% threshold, which is meaningless under contract
-// grading -- a student meeting every C requirement currently reads as at risk.
-// Rework this against the shared contract evaluator.
+// Class-wide analytics, measured against each student's own contract.
 router.get(
   "/api/classes/:classId/analytics",
   requireClassOwner(),
@@ -64,27 +61,58 @@ router.get(
       return { assignment, completionRate, statusBreakdown };
     });
 
+    const [participation, absences] = await Promise.all([
+      storage.getClassParticipation(classId),
+      storage.getClassAbsences(classId),
+    ]);
+
+    const evaluationContracts = contracts.map((c) => ({
+      id: c.id,
+      grade: c.grade,
+      version: c.version,
+      assignments: c.assignments,
+      categoryRequirements: c.categoryRequirements,
+      requiredParticipationSessions: c.requiredParticipationSessions,
+      maxAbsences: c.maxAbsences,
+    }));
+
     const studentPerformance = students.map((student) => {
       const studentProgress = progressByStudent.get(student.id) || [];
-      const studentContract = studentContracts.find((sc) => sc.studentId === student.id);
+      const enrollment = studentContracts.find((sc) => sc.studentId === student.id);
 
-      const completedAssignments = studentProgress.filter((p) =>
-        isAssignmentDone(p.status)
-      ).length;
-      const progressScore =
-        assignments.length > 0
-          ? Math.round((completedAssignments / assignments.length) * 100)
-          : 0;
+      const standing = evaluateStanding({
+        contracts: evaluationContracts,
+        chosenContractId: enrollment?.contractId ?? null,
+        assignments,
+        progress: studentProgress,
+        participationSessions: participation.filter(
+          (r) =>
+            r.studentId === student.id &&
+            meetsParticipationBar(r.participation, req.cls!.participationBar)
+        ).length,
+        absences: Number(absences.find((a) => a.studentId === student.id)?.absences ?? 0),
+        policy: {
+          absencePenaltyThreshold: req.cls!.absencePenaltyThreshold,
+          absenceFailureThreshold: req.cls!.absenceFailureThreshold,
+        },
+      });
 
       return {
         student: toPublicUser(student),
-        contract: studentContract || null,
-        progressScore,
-        completedAssignments,
+        contract: enrollment || null,
+        // What the contract actually says, rather than a share of all work.
+        contractGrade: standing.chosen?.grade ?? null,
+        meetingContract: standing.chosen?.met ?? false,
+        highestMet: standing.highestMet,
+        effectiveGrade: standing.effectiveGrade,
+        penalty: standing.penalty,
+        outstanding: standing.chosen?.actionable ?? [],
+        completedAssignments: studentProgress.filter((p) => isAssignmentDone(p.status)).length,
         totalAssignments: assignments.length,
-        lastActivity: studentProgress.length > 0 ? "Recent activity" : "No activity",
       };
     });
+
+    const withContract = studentPerformance.filter((sp) => sp.contractGrade !== null);
 
     const contractDistribution = contracts.map((contract) => {
       const contractStudents = studentContracts.filter(
@@ -102,20 +130,17 @@ router.get(
       };
     });
 
-    const overallCompletionRate =
-      studentPerformance.length > 0
-        ? Math.round(
-            studentPerformance.reduce((sum, sp) => sum + sp.progressScore, 0) /
-              studentPerformance.length
-          )
-        : 0;
-
     res.json({
       classInfo: req.cls,
       totalStudents: students.length,
-      overallCompletionRate,
-      atRiskStudents: studentPerformance.filter((sp) => sp.progressScore < 60).length,
-      highPerformers: studentPerformance.filter((sp) => sp.progressScore >= 90).length,
+      studentsWithContract: withContract.length,
+      // "At risk" now means not on track for the contract this student chose,
+      // rather than a share of all class work. Under contract grading a student
+      // meeting every C requirement is not at risk, and used to read as such.
+      atRiskStudents: withContract.filter((sp) => !sp.meetingContract).length,
+      meetingContract: withContract.filter((sp) => sp.meetingContract).length,
+      noContractSelected: studentPerformance.length - withContract.length,
+      underAbsencePenalty: studentPerformance.filter((sp) => sp.penalty !== "none").length,
       assignmentStats,
       studentPerformance,
       contractDistribution,

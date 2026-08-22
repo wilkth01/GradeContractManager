@@ -32,7 +32,10 @@ export interface IStorage {
 
   createGradeContract(contract: Omit<GradeContract, "id">): Promise<GradeContract>;
   getContractsByClass(classId: number): Promise<GradeContract[]>;
-  updateGradeContract(contract: GradeContract): Promise<GradeContract>;
+  publishContractVersion(
+    previous: GradeContract,
+    changes: Omit<GradeContract, "id" | "version">
+  ): Promise<{ contract: GradeContract; movedStudents: number; heldStudents: number }>;
 
   setStudentContract(contract: Omit<StudentContract, "id">): Promise<StudentContract>;
   getStudentContract(studentId: number, classId: number): Promise<StudentContract | undefined>;
@@ -255,13 +258,52 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(gradeContracts).where(eq(gradeContracts.classId, classId));
   }
 
-  async updateGradeContract(contract: GradeContract): Promise<GradeContract> {
-    const [updatedContract] = await db
-      .update(gradeContracts)
-      .set(contract)
-      .where(eq(gradeContracts.id, contract.id))
-      .returning();
-    return updatedContract;
+  /**
+   * Publish an edited contract as a new version.
+   *
+   * Editing used to update the row in place, so a student who confirmed a Grade
+   * B contract in week 3 was silently held to a different Grade B contract in
+   * week 10. A contract that can be rewritten under the people who agreed to it
+   * is not a contract.
+   *
+   * Students who have not confirmed move to the new version, since they have
+   * committed to nothing yet. Students who have confirmed stay on the exact
+   * terms they accepted until they choose again.
+   */
+  async publishContractVersion(
+    previous: GradeContract,
+    changes: Omit<GradeContract, "id" | "version">
+  ): Promise<{ contract: GradeContract; movedStudents: number; heldStudents: number }> {
+    return db.transaction(async (tx) => {
+      const [published] = await tx
+        .insert(gradeContracts)
+        .values({ ...changes, version: previous.version + 1 })
+        .returning();
+
+      const onPrevious = await tx
+        .select()
+        .from(studentContracts)
+        .where(eq(studentContracts.contractId, previous.id));
+
+      const unconfirmed = onPrevious.filter((sc) => !sc.isConfirmed);
+      if (unconfirmed.length > 0) {
+        await tx
+          .update(studentContracts)
+          .set({ contractId: published.id })
+          .where(
+            and(
+              eq(studentContracts.contractId, previous.id),
+              eq(studentContracts.isConfirmed, false)
+            )
+          );
+      }
+
+      return {
+        contract: published,
+        movedStudents: unconfirmed.length,
+        heldStudents: onPrevious.length - unconfirmed.length,
+      };
+    });
   }
 
   async setStudentContract(contract: Omit<StudentContract, "id">): Promise<StudentContract> {

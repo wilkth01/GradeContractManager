@@ -243,10 +243,26 @@ const contractStorage = {
   async createGradeContract(contract: Omit<GradeContract, "id">) {
     return addContract(contract.classId, contract);
   },
-  async updateGradeContract(contract: GradeContract) {
-    const existing = db.gradeContracts.find((c) => c.id === contract.id)!;
-    Object.assign(existing, contract);
-    return existing;
+  async publishContractVersion(
+    previous: GradeContract,
+    changes: Omit<GradeContract, "id" | "version">
+  ) {
+    const published = addContract(changes.classId, {
+      ...changes,
+      version: previous.version + 1,
+    });
+
+    const onPrevious = db.studentContracts.filter((sc) => sc.contractId === previous.id);
+    const unconfirmed = onPrevious.filter((sc) => !sc.isConfirmed);
+    for (const enrollment of unconfirmed) {
+      enrollment.contractId = published.id;
+    }
+
+    return {
+      contract: published,
+      movedStudents: unconfirmed.length,
+      heldStudents: onPrevious.length - unconfirmed.length,
+    };
   },
 
   async getStudentContract(studentId: number, classId: number) {

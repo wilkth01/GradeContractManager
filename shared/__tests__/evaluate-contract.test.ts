@@ -389,3 +389,49 @@ describe("everything is per-course", () => {
       .toBe("none");
   });
 });
+
+describe("contract versions", () => {
+  const v1: EvaluationContract = {
+    id: 10,
+    grade: "A",
+    version: 1,
+    assignments: discussionLogs.map((a) => ({ id: a.id })),
+    categoryRequirements: [{ category: "Discussion Logs", required: 3 }],
+    maxAbsences: 5,
+  };
+  const v2: EvaluationContract = { ...v1, id: 11, version: 2,
+    categoryRequirements: [{ category: "Discussion Logs", required: 9 }] };
+
+  const base = {
+    assignments: allAssignments,
+    progress: logsComplete(4),
+    participationSessions: 0,
+    absences: 0,
+    now: NOW,
+  };
+
+  it("measures an unconfirmed student against the current version", () => {
+    const standing = evaluateStanding({ ...base, contracts: [v1, v2], chosenContractId: 11 });
+
+    // v2 needs 9 logs; four is short.
+    expect(standing.chosen?.contractId).toBe(11);
+    expect(standing.chosen?.met).toBe(false);
+    expect(standing.highestMet).toBeNull();
+  });
+
+  it("holds a confirmed student to the version they agreed to", () => {
+    // Still pointing at v1, which only needed 3 logs.
+    const standing = evaluateStanding({ ...base, contracts: [v1, v2], chosenContractId: 10 });
+
+    expect(standing.chosen?.contractId).toBe(10);
+    expect(standing.chosen?.met).toBe(true);
+    expect(standing.highestMet).toBe("A");
+  });
+
+  it("does not evaluate the same grade twice when versions accumulate", () => {
+    const standing = evaluateStanding({ ...base, contracts: [v1, v2], chosenContractId: null });
+
+    expect(standing.all).toHaveLength(1);
+    expect(standing.all[0].contractId).toBe(11);
+  });
+});

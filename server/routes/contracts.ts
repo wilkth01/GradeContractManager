@@ -83,18 +83,22 @@ router.patch(
       throw new BadRequestError("Invalid grade contract data");
     }
 
-    const updatedContract = await storage.updateGradeContract({
-      id: contractId,
+    // Published as a new version rather than edited in place, so students who
+    // already confirmed keep the terms they agreed to.
+    const result = await storage.publishContractVersion(contract, {
       classId: req.cls!.id,
       grade: parsed.data.grade,
-      version: parsed.data.version,
       assignments: parsed.data.assignments,
       requiredParticipationSessions: parsed.data.requiredParticipationSessions ?? 0,
       maxAbsences: parsed.data.maxAbsences ?? 0,
       categoryRequirements: parsed.data.categoryRequirements ?? null,
     });
 
-    res.json(updatedContract);
+    res.json({
+      ...result.contract,
+      movedStudents: result.movedStudents,
+      heldStudents: result.heldStudents,
+    });
   })
 );
 
