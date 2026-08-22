@@ -1,95 +1,89 @@
 import { Router } from "express";
-import { requireInstructor } from "../middleware";
+import { requireClassOwner } from "../middleware";
 import { storage } from "../storage";
+import { asyncHandler, BadRequestError, ForbiddenError } from "../errors";
 import {
   CanvasImportService,
   NormalizedGradeData,
   AssignmentMapping,
   GradeChange,
-  AbsenceChange,
 } from "../services/canvas-import";
 
 const router = Router();
 const importService = new CanvasImportService();
 
 /**
- * Generate a preview of the import without committing changes
- * POST /api/classes/:classId/canvas/preview
+ * Preview an import without committing anything.
  */
-router.post("/api/classes/:classId/canvas/preview", requireInstructor, async (req, res) => {
-  const classId = parseInt(req.params.classId);
+router.post(
+  "/api/classes/:classId/canvas/preview",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const { normalizedData, mappings } = req.body as {
+      normalizedData: NormalizedGradeData;
+      mappings: AssignmentMapping[];
+    };
 
-  if (isNaN(classId)) {
-    return res.status(400).json({ message: "Invalid class ID" });
-  }
+    if (!normalizedData || !Array.isArray(mappings)) {
+      throw new BadRequestError("Missing normalizedData or mappings");
+    }
 
-  // Verify instructor owns this class
-  const cls = await storage.getClass(classId);
-  if (!cls || cls.instructorId !== req.user!.id) {
-    return res.status(403).json({ message: "Not authorized" });
-  }
-
-  const { normalizedData, mappings } = req.body as {
-    normalizedData: NormalizedGradeData;
-    mappings: AssignmentMapping[];
-  };
-
-  if (!normalizedData || !mappings) {
-    return res.status(400).json({ message: "Missing normalizedData or mappings" });
-  }
-
-  try {
-    const preview = await importService.generatePreview(classId, normalizedData, mappings);
+    const preview = await importService.generatePreview(
+      req.cls!.id,
+      normalizedData,
+      mappings
+    );
     res.json(preview);
-  } catch (error) {
-    console.error("Error generating import preview:", error);
-    res.status(500).json({
-      message: error instanceof Error ? error.message : "Failed to generate preview"
-    });
-  }
-});
+  })
+);
 
 /**
- * Execute the import with approved grade changes
- * POST /api/classes/:classId/canvas/import
+ * Commit an import.
+ *
+ * The changes arrive from the client, so every student and assignment id is
+ * re-checked against this class before anything is written. Without that, a
+ * crafted request could write progress rows for any student on any assignment
+ * anywhere in the database, using nothing but ownership of one unrelated class.
  */
-router.post("/api/classes/:classId/canvas/import", requireInstructor, async (req, res) => {
-  const classId = parseInt(req.params.classId);
+router.post(
+  "/api/classes/:classId/canvas/import",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const classId = req.cls!.id;
+    const { gradeChanges } = req.body as { gradeChanges: GradeChange[] };
 
-  if (isNaN(classId)) {
-    return res.status(400).json({ message: "Invalid class ID" });
-  }
+    if (!Array.isArray(gradeChanges)) {
+      throw new BadRequestError("Missing or invalid gradeChanges");
+    }
 
-  // Verify instructor owns this class
-  const cls = await storage.getClass(classId);
-  if (!cls || cls.instructorId !== req.user!.id) {
-    return res.status(403).json({ message: "Not authorized" });
-  }
+    const [enrolled, classAssignments] = await Promise.all([
+      storage.getEnrolledStudents(classId),
+      storage.getAssignmentsByClass(classId),
+    ]);
+    const enrolledIds = new Set(enrolled.map((s) => s.id));
+    const assignmentIds = new Set(classAssignments.map((a) => a.id));
 
-  const { gradeChanges, absenceChanges } = req.body as { gradeChanges: GradeChange[]; absenceChanges?: AbsenceChange[] };
+    for (const change of gradeChanges) {
+      if (!enrolledIds.has(change.studentId)) {
+        throw new ForbiddenError("An imported grade names a student outside this class");
+      }
+      if (!assignmentIds.has(change.assignmentId)) {
+        throw new ForbiddenError(
+          "An imported grade names an assignment outside this class"
+        );
+      }
+    }
 
-  if (!gradeChanges || !Array.isArray(gradeChanges)) {
-    return res.status(400).json({ message: "Missing or invalid gradeChanges" });
-  }
+    const result = await importService.executeImport(gradeChanges, classId);
 
-  try {
-    const result = await importService.executeImport(gradeChanges, classId, absenceChanges);
-
-    // Log successful imports to audit (if audit service is available)
     console.log(`Canvas import completed for class ${classId}:`, {
       processedStudents: result.processedStudents,
       processedGrades: result.processedGrades,
-      processedAbsences: result.processedAbsences,
-      errors: result.errors.length
+      errors: result.errors.length,
     });
 
     res.json(result);
-  } catch (error) {
-    console.error("Error executing import:", error);
-    res.status(500).json({
-      message: error instanceof Error ? error.message : "Failed to execute import"
-    });
-  }
-});
+  })
+);
 
 export default router;

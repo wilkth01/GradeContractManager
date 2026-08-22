@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { insertUserSchema } from "@shared/schema";
 import { z } from "zod";
 import { useLocation } from "wouter";
 import {
@@ -22,19 +21,11 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ForgotPasswordDialog } from "@/components/dialogs/forgot-password-dialog";
 import { GraduationCap, BookOpen, Users, Award } from "lucide-react";
 
 export default function AuthPage() {
-  const { user, loginMutation, registerMutation } = useAuth();
+  const { user, loginMutation } = useAuth();
   const [_location, setLocation] = useLocation();
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
 
@@ -54,16 +45,6 @@ export default function AuthPage() {
     defaultValues: {
       username: "",
       password: "",
-    },
-  });
-
-  const registerForm = useForm({
-    resolver: zodResolver(insertUserSchema),
-    defaultValues: {
-      username: "",
-      password: "",
-      role: "student" as const,
-      fullName: "",
     },
   });
 
@@ -108,17 +89,7 @@ export default function AuthPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="pb-8">
-              <Tabs defaultValue="login" className="mt-4">
-                <TabsList className="grid w-full grid-cols-2 mb-6">
-                  <TabsTrigger value="login" className="text-sm font-medium">
-                    Sign In
-                  </TabsTrigger>
-                  <TabsTrigger value="register" className="text-sm font-medium">
-                    Register
-                  </TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="login" className="space-y-4 animate-fade-in">
+              <div className="mt-4 space-y-4 animate-fade-in">
                   <Form {...loginForm}>
                     <form
                       onSubmit={loginForm.handleSubmit((data) =>
@@ -187,104 +158,11 @@ export default function AuthPage() {
                       )}
                     </form>
                   </Form>
-                </TabsContent>
-
-                <TabsContent value="register" className="space-y-4 animate-fade-in">
-                  <Form {...registerForm}>
-                    <form
-                      onSubmit={registerForm.handleSubmit((data) =>
-                        registerMutation.mutate(data)
-                      )}
-                      className="space-y-5"
-                    >
-                      <FormField
-                        control={registerForm.control}
-                        name="fullName"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-sm font-medium">Full Name</FormLabel>
-                            <FormControl>
-                              <Input
-                                {...field}
-                                className="h-12 text-base"
-                                placeholder="Enter your full name"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={registerForm.control}
-                        name="username"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-sm font-medium">Username</FormLabel>
-                            <FormControl>
-                              <Input
-                                {...field}
-                                className="h-12 text-base"
-                                placeholder="Choose a username"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={registerForm.control}
-                        name="password"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-sm font-medium">Password</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="password"
-                                {...field}
-                                className="h-12 text-base"
-                                placeholder="Create a password"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={registerForm.control}
-                        name="role"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-sm font-medium">I am a...</FormLabel>
-                            <Select
-                              onValueChange={field.onChange}
-                              defaultValue={field.value}
-                            >
-                              <FormControl>
-                                <SelectTrigger className="h-12 text-base">
-                                  <SelectValue placeholder="Select your role" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="student">Student</SelectItem>
-                                <SelectItem value="instructor">Instructor</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <Button
-                        type="submit"
-                        className="w-full"
-                        size="lg"
-                        disabled={registerMutation.isPending}
-                      >
-                        {registerMutation.isPending ? "Creating Account..." : "Create Account"}
-                      </Button>
-                    </form>
-                  </Form>
-                </TabsContent>
-              </Tabs>
+                <p className="text-center text-sm text-muted-foreground pt-2">
+                  Students receive an account through an invitation link from
+                  their instructor. Contact your instructor if you need one.
+                </p>
+              </div>
             </CardContent>
           </Card>
         </main>

@@ -1,87 +1,44 @@
 import { Router } from "express";
 import { auditService } from "../audit";
-import { requireAuth, requireInstructor } from "../middleware";
-import { storage } from "../storage";
+import { requireClassOwner, requireStudentAccess } from "../middleware";
+import { asyncHandler, BadRequestError } from "../errors";
 
 const router = Router();
 
-// Get audit history for a specific student in a class
+// Change history for one student in one class.
+// The student themselves, or the instructor who owns the class.
 router.get(
   "/api/classes/:classId/students/:studentId/history",
-  requireAuth,
-  async (req, res) => {
-    const classId = parseInt(req.params.classId);
+  requireStudentAccess(),
+  asyncHandler(async (req, res) => {
+    const classId = req.cls!.id;
     const studentId = parseInt(req.params.studentId);
 
-    if (isNaN(classId) || isNaN(studentId)) {
-      return res.status(400).json({ message: "Invalid ID" });
-    }
+    const logs = await auditService.getLogsForStudent(studentId);
 
-    // Verify access
-    if (req.user!.role === "instructor") {
-      // Instructor must own the class
-      const cls = await storage.getClass(classId);
-      if (!cls || cls.instructorId !== req.user!.id) {
-        return res.sendStatus(403);
-      }
-    } else {
-      // Students can only view their own history
-      if (req.user!.id !== studentId) {
-        return res.sendStatus(403);
-      }
-      // Verify student is enrolled
-      const contract = await storage.getStudentContract(studentId, classId);
-      if (!contract) {
-        return res.sendStatus(403);
-      }
-    }
+    const classLogs = logs.filter((log) => {
+      const values = (log.newValues || log.oldValues) as Record<string, unknown> | null;
+      return values?.classId === classId;
+    });
 
-    try {
-      const logs = await auditService.getLogsForStudent(studentId);
-
-      // Filter to only logs related to this class
-      const classLogs = logs.filter((log) => {
-        const values = (log.newValues || log.oldValues) as Record<
-          string,
-          unknown
-        > | null;
-        return values?.classId === classId;
-      });
-
-      res.json(classLogs);
-    } catch (error) {
-      console.error("Error fetching student history:", error);
-      res.status(500).json({ message: "Failed to fetch history" });
-    }
-  }
+    res.json(classLogs);
+  })
 );
 
-// Get all activity for a class (instructor only)
+// All activity in a class
 router.get(
   "/api/classes/:classId/activity",
-  requireInstructor,
-  async (req, res) => {
-    const classId = parseInt(req.params.classId);
-
-    if (isNaN(classId)) {
-      return res.status(400).json({ message: "Invalid class ID" });
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const rawLimit = req.query.limit;
+    const limit = typeof rawLimit === "string" ? parseInt(rawLimit, 10) : 100;
+    if (isNaN(limit) || limit < 1 || limit > 500) {
+      throw new BadRequestError("limit must be between 1 and 500");
     }
 
-    // Verify instructor owns the class
-    const cls = await storage.getClass(classId);
-    if (!cls || cls.instructorId !== req.user!.id) {
-      return res.sendStatus(403);
-    }
-
-    try {
-      const limit = parseInt(req.query.limit as string) || 100;
-      const logs = await auditService.getLogsForClass(classId, limit);
-      res.json(logs);
-    } catch (error) {
-      console.error("Error fetching class activity:", error);
-      res.status(500).json({ message: "Failed to fetch activity" });
-    }
-  }
+    const logs = await auditService.getLogsForClass(req.cls!.id, limit);
+    res.json(logs);
+  })
 );
 
 export default router;

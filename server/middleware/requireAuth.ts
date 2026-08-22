@@ -141,3 +141,60 @@ export function parseIntParam(value: string, name: string): number | null {
   }
   return parsed;
 }
+
+/**
+ * Middleware factory for routes scoped to one student inside one class.
+ *
+ * Grants access to the instructor who owns the class, or to that student
+ * themselves (provided they are enrolled). Any other authenticated user is
+ * rejected -- this is what stops a student reading a classmate's record by
+ * changing the id in the URL.
+ *
+ * Attaches the class to req.cls for use in route handlers.
+ */
+export function requireStudentAccess(
+  classIdParam: string = "classId",
+  studentIdParam: string = "studentId"
+) {
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      if (!req.isAuthenticated()) {
+        return next(new UnauthorizedError());
+      }
+
+      const classId = parseInt(req.params[classIdParam]);
+      if (isNaN(classId)) {
+        return next(new BadRequestError("Invalid class ID"));
+      }
+
+      const studentId = parseInt(req.params[studentIdParam]);
+      if (isNaN(studentId)) {
+        return next(new BadRequestError("Invalid student ID"));
+      }
+
+      const cls = await storage.getClass(classId);
+      if (!cls) {
+        return next(new NotFoundError("Class not found"));
+      }
+
+      if (req.user.role === "instructor") {
+        if (cls.instructorId !== req.user.id) {
+          return next(new ForbiddenError("You do not own this class"));
+        }
+      } else {
+        if (req.user.id !== studentId) {
+          return next(new ForbiddenError("You may only access your own record"));
+        }
+        const enrollment = await storage.getStudentContract(req.user.id, classId);
+        if (!enrollment) {
+          return next(new ForbiddenError("You are not enrolled in this class"));
+        }
+      }
+
+      req.cls = cls;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}
