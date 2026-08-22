@@ -14,5 +14,9 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
-      - key: SENDGRID_API_KEY
-        sync: false
+      # Encrypts stored Canvas tokens. Rotating it invalidates them,
+      # and instructors reconnect Canvas.
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: CANVAS_BASE_URL
+        value: https://widener.instructure.com
