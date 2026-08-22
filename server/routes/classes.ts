@@ -26,6 +26,7 @@ router.post(
       absenceFailureThreshold: parsed.data.absenceFailureThreshold ?? null,
       participationBar: parsed.data.participationBar ?? null,
       canvasCourseId: parsed.data.canvasCourseId ?? null,
+      canvasAbsenceAssignmentId: null,
     });
     res.status(201).json(newClass);
   })

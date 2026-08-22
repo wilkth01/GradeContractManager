@@ -2,7 +2,14 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { encryptSecret, decryptSecret } from "../crypto";
 import { CanvasClient, CanvasError } from "../services/canvas/client";
-import { canvasTokenSchema, linkCanvasCourseSchema, importRosterSchema } from "@shared/schema";
+import { buildPull } from "../services/canvas/grade-pull";
+import { auditService } from "../audit";
+import {
+  canvasTokenSchema,
+  linkCanvasCourseSchema,
+  importRosterSchema,
+  mapCanvasAssignmentsSchema,
+} from "@shared/schema";
 import { requireInstructor, requireClassOwner } from "../middleware";
 import { asyncHandler, BadRequestError, NotFoundError } from "../errors";
 
@@ -111,7 +118,11 @@ router.put(
       throw new BadRequestError("A Canvas course id is required");
     }
 
-    const updated = await storage.linkCanvasCourse(req.cls!.id, parsed.data.canvasCourseId);
+    const updated = await storage.linkCanvasCourse(
+      req.cls!.id,
+      parsed.data.canvasCourseId,
+      parsed.data.canvasAbsenceAssignmentId
+    );
     res.json(updated);
   })
 );
@@ -242,6 +253,216 @@ router.post(
     }
 
     res.json({ linked, created, skipped, canvasStudentCount: canvasStudents.length });
+  })
+);
+
+/**
+ * Canvas assignments in the linked course, alongside this class's assignments
+ * and whatever mapping already exists.
+ *
+ * Every Canvas assignment is offered regardless of its group. Mapping by group
+ * would miss readings filed elsewhere, which is exactly the problem the
+ * instructor's own tracker had to work around.
+ */
+router.get(
+  "/api/classes/:classId/canvas/assignments",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const cls = req.cls!;
+    if (!cls.canvasCourseId) {
+      throw new BadRequestError("Link this class to a Canvas course first");
+    }
+
+    const client = await canvasClientFor(req.user!.id);
+    const [canvasAssignments, groups, portalAssignments] = await Promise.all([
+      client.courseAssignments(cls.canvasCourseId),
+      client.assignmentGroups(cls.canvasCourseId),
+      storage.getAssignmentsByClass(cls.id),
+    ]);
+
+    const groupName = new Map(groups.map((g) => [g.id, g.name]));
+
+    res.json({
+      canvasAssignments: canvasAssignments.map((a) => ({
+        id: a.id,
+        name: a.name,
+        pointsPossible: a.points_possible,
+        group: groupName.get(a.assignment_group_id) ?? "Ungrouped",
+      })),
+      portalAssignments: portalAssignments.map((a) => ({
+        id: a.id,
+        name: a.name,
+        moduleGroup: a.moduleGroup,
+        scoringType: a.scoringType,
+        canvasAssignmentId: a.canvasAssignmentId,
+      })),
+      absenceCanvasAssignmentId: cls.canvasAbsenceAssignmentId,
+    });
+  })
+);
+
+router.put(
+  "/api/classes/:classId/canvas/assignment-map",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const parsed = mapCanvasAssignmentsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new BadRequestError("Invalid assignment mapping");
+    }
+
+    // Only this class's assignments may be remapped.
+    const owned = new Set((await storage.getAssignmentsByClass(req.cls!.id)).map((a) => a.id));
+    for (const mapping of parsed.data.mappings) {
+      if (!owned.has(mapping.assignmentId)) {
+        throw new BadRequestError("That assignment does not belong to this class");
+      }
+    }
+
+    await storage.setCanvasAssignmentIds(req.cls!.id, parsed.data.mappings);
+    res.json({ mapped: parsed.data.mappings.filter((m) => m.canvasAssignmentId).length });
+  })
+);
+
+/**
+ * Fetch grades from Canvas and report what an import would change.
+ *
+ * Nothing is written. The instructor sees the changes before any of them lands,
+ * which is the same guarantee the CSV path gives.
+ */
+async function pullFromCanvas(req: any) {
+  const cls = req.cls!;
+  if (!cls.canvasCourseId) {
+    throw new BadRequestError("Link this class to a Canvas course first");
+  }
+
+  const client = await canvasClientFor(req.user!.id);
+  const [portalAssignments, students, canvasAssignments, absences] = await Promise.all([
+    storage.getAssignmentsByClass(cls.id),
+    storage.getEnrolledStudents(cls.id),
+    client.courseAssignments(cls.canvasCourseId),
+    storage.getClassAbsences(cls.id),
+  ]);
+
+  const mapped = portalAssignments.filter((a) => a.canvasAssignmentId != null);
+  const wantedCanvasIds = mapped.map((a) => a.canvasAssignmentId!);
+  if (cls.canvasAbsenceAssignmentId) {
+    wantedCanvasIds.push(cls.canvasAbsenceAssignmentId);
+  }
+
+  if (wantedCanvasIds.length === 0) {
+    throw new BadRequestError(
+      "Map at least one assignment to Canvas before pulling grades"
+    );
+  }
+
+  const [submissions, existingProgress] = await Promise.all([
+    client.submissions(cls.canvasCourseId, wantedCanvasIds),
+    storage.getStudentProgressForClass(cls.id),
+  ]);
+
+  return buildPull({
+    students,
+    assignments: portalAssignments,
+    submissions,
+    existingProgress: existingProgress.map((p) => ({
+      studentId: p.studentId,
+      assignmentId: p.assignmentId,
+      status: p.status,
+      numericGrade: p.numericGrade,
+    })),
+    canvasPointsById: new Map(canvasAssignments.map((a) => [a.id, a.points_possible])),
+    absenceCanvasAssignmentId: cls.canvasAbsenceAssignmentId,
+    currentAbsences: new Map(
+      absences.map((a) => [a.studentId, Number(a.absences)])
+    ),
+  });
+}
+
+router.post(
+  "/api/classes/:classId/canvas/pull-preview",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    res.json(await pullFromCanvas(req));
+  })
+);
+
+/**
+ * Apply what a pull found.
+ *
+ * The pull is repeated server-side rather than trusting changes posted back
+ * from the browser, so a crafted request cannot write arbitrary grades. The
+ * client sends only which changes to keep.
+ */
+router.post(
+  "/api/classes/:classId/canvas/pull-commit",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const cls = req.cls!;
+    const skipAssignments: number[] = Array.isArray(req.body?.skipAssignmentIds)
+      ? req.body.skipAssignmentIds
+      : [];
+    const includeAbsences = req.body?.includeAbsences !== false;
+
+    const pull = await pullFromCanvas(req);
+    const skip = new Set(skipAssignments);
+    const applying = pull.gradeChanges.filter((c) => !skip.has(c.assignmentId));
+
+    let appliedGrades = 0;
+    for (const change of applying) {
+      const existing = (await storage.getStudentProgress(change.studentId, cls.id)).find(
+        (p) => p.assignmentId === change.assignmentId
+      );
+
+      const progress = await storage.updateProgress({
+        studentId: change.studentId,
+        assignmentId: change.assignmentId,
+        status: change.convertedStatus,
+        numericGrade: change.convertedNumeric != null ? String(change.convertedNumeric) : null,
+        lastUpdated: new Date(),
+        attempts: existing?.attempts ?? 0,
+      });
+
+      // The CSV importer bypassed the audit trail entirely; this does not.
+      await auditService.logWithRequest(req, {
+        action: existing ? "UPDATE" : "CREATE",
+        entityType: "assignment_progress",
+        entityId: progress.id,
+        oldValues: existing
+          ? {
+              studentId: existing.studentId,
+              assignmentId: existing.assignmentId,
+              status: existing.status,
+              numericGrade: existing.numericGrade,
+              classId: cls.id,
+              source: "canvas",
+            }
+          : null,
+        newValues: {
+          studentId: progress.studentId,
+          assignmentId: progress.assignmentId,
+          status: progress.status,
+          numericGrade: progress.numericGrade,
+          classId: cls.id,
+          source: "canvas",
+        },
+      });
+      appliedGrades++;
+    }
+
+    let appliedAbsences = 0;
+    if (includeAbsences) {
+      for (const change of pull.absenceChanges) {
+        await storage.setStudentAbsences(
+          change.studentId,
+          cls.id,
+          change.newAbsences,
+          "canvas"
+        );
+        appliedAbsences++;
+      }
+    }
+
+    res.json({ appliedGrades, appliedAbsences, summary: pull.summary });
   })
 );
 

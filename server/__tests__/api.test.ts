@@ -979,3 +979,68 @@ describe("Contract edits apply to everyone on that contract", () => {
     expect(second.contractId).toBe(res.body.id);
   });
 });
+
+describe("Canvas grade pull", () => {
+  it("refuses to pull before a Canvas course is linked", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/canvas/pull-preview`).send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain("Canvas course");
+  });
+
+  it("blocks a non-owner from pulling into a class", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id, { canvasCourseId: 52959 });
+    const agent = await loginAs(app, "other", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/canvas/pull-preview`).send({});
+
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses to map an assignment belonging to another class", async () => {
+    const prof = instructor("prof");
+    const mine = addClass(prof.id);
+    const theirs = addClass(prof.id);
+    const foreign = addAssignment(theirs.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent
+      .put(`/api/classes/${mine.id}/canvas/assignment-map`)
+      .send({ mappings: [{ assignmentId: foreign.id, canvasAssignmentId: 500 }] });
+
+    expect(res.status).toBe(400);
+    expect(foreign.canvasAssignmentId).toBeNull();
+  });
+
+  it("stores a mapping for its own assignments", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const mine = addAssignment(cls.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent
+      .put(`/api/classes/${cls.id}/canvas/assignment-map`)
+      .send({ mappings: [{ assignmentId: mine.id, canvasAssignmentId: 500 }] });
+
+    expect(res.status).toBe(200);
+    expect(mine.canvasAssignmentId).toBe(500);
+  });
+
+  it("requires at least one mapped assignment before pulling", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id, { canvasCourseId: 52959 });
+    addAssignment(cls.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    // No token either, but the mapping check should not be what fails last.
+    const res = await agent.post(`/api/classes/${cls.id}/canvas/pull-preview`).send({});
+
+    expect(res.status).toBe(400);
+  });
+});

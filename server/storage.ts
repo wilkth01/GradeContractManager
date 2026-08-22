@@ -15,7 +15,8 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   setCanvasToken(userId: number, encrypted: string | null): Promise<void>;
   setCanvasUserId(userId: number, canvasUserId: number | null): Promise<void>;
-  linkCanvasCourse(classId: number, canvasCourseId: number | null): Promise<Class>;
+  linkCanvasCourse(classId: number, canvasCourseId: number | null, canvasAbsenceAssignmentId?: number | null): Promise<Class>;
+  setCanvasAssignmentIds(classId: number, mappings: { assignmentId: number; canvasAssignmentId: number | null }[]): Promise<void>;
 
   createClass(classData: Omit<Class, "id" | "isArchived">): Promise<Class>;
   getClass(id: number): Promise<Class | undefined>;
@@ -125,13 +126,39 @@ export class DatabaseStorage implements IStorage {
     await db.update(users).set({ canvasUserId }).where(eq(users.id, userId));
   }
 
-  async linkCanvasCourse(classId: number, canvasCourseId: number | null): Promise<Class> {
+  async linkCanvasCourse(
+    classId: number,
+    canvasCourseId: number | null,
+    canvasAbsenceAssignmentId?: number | null
+  ): Promise<Class> {
     const [updated] = await db
       .update(classes)
-      .set({ canvasCourseId })
+      .set({
+        canvasCourseId,
+        ...(canvasAbsenceAssignmentId !== undefined ? { canvasAbsenceAssignmentId } : {}),
+      })
       .where(eq(classes.id, classId))
       .returning();
     return updated;
+  }
+
+  /** Scoped to the class, so a mapping cannot reach another class's assignment. */
+  async setCanvasAssignmentIds(
+    classId: number,
+    mappings: { assignmentId: number; canvasAssignmentId: number | null }[]
+  ): Promise<void> {
+    if (mappings.length === 0) return;
+
+    await db.transaction(async (tx) => {
+      for (const mapping of mappings) {
+        await tx
+          .update(assignments)
+          .set({ canvasAssignmentId: mapping.canvasAssignmentId })
+          .where(
+            and(eq(assignments.id, mapping.assignmentId), eq(assignments.classId, classId))
+          );
+      }
+    });
   }
 
   async createClass(classData: Omit<Class, "id" | "isArchived">): Promise<Class> {

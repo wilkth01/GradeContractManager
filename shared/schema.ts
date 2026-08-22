@@ -37,6 +37,8 @@ export const classes = pgTable("classes", {
   description: text("description"),
   semesterStartDate: text("semester_start_date"),
   canvasCourseId: integer("canvas_course_id"),
+  // The Canvas assignment Qwickly writes absence totals into, if enabled.
+  canvasAbsenceAssignmentId: integer("canvas_absence_assignment_id"),
   // Absence penalties that sit above the contract tiers: at or beyond the first
   // threshold the earned grade drops one letter, at or beyond the second the
   // course is failed outright, whatever the contract says. Null disables.
@@ -55,6 +57,10 @@ export const assignments = pgTable("assignments", {
   scoringType: text("scoring_type", { enum: ["status", "numeric"] }).notNull(),
   displayOrder: integer("display_order").notNull().default(0),
   dueDate: timestamp("due_date"),
+  // Mapped once, so grades pull without re-matching columns every import.
+  // Per-assignment rather than per-group deliberately: the Canvas assignment
+  // group does not reliably contain every reading of a given kind.
+  canvasAssignmentId: integer("canvas_assignment_id"),
 });
 
 export const gradeContracts = pgTable("grade_contracts", {
@@ -130,6 +136,7 @@ export const insertClassSchema = createInsertSchema(classes).pick({
   absenceFailureThreshold: z.number().int().min(1).nullable().optional(),
   participationBar: z.number().int().min(0).max(MAX_PARTICIPATION).nullable().optional(),
   canvasCourseId: z.number().int().positive().nullable().optional(),
+  canvasAbsenceAssignmentId: z.number().int().positive().nullable().optional(),
 });
 
 export const updateClassSchema = insertClassSchema.partial();
@@ -306,6 +313,16 @@ export const importRosterSchema = z.object({
 
 export const linkCanvasCourseSchema = z.object({
   canvasCourseId: z.number().int().positive().nullable(),
+  canvasAbsenceAssignmentId: z.number().int().positive().nullable().optional(),
+});
+
+export const mapCanvasAssignmentsSchema = z.object({
+  mappings: z.array(
+    z.object({
+      assignmentId: z.number().int(),
+      canvasAssignmentId: z.number().int().positive().nullable(),
+    })
+  ),
 });
 
 export const sendMessagesSchema = z.object({

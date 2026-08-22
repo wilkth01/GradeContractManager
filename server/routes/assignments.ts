@@ -24,6 +24,7 @@ router.post(
     const assignment = await storage.createAssignment({
       ...parsed.data,
       dueDate: parsed.data.dueDate ? new Date(parsed.data.dueDate) : null,
+      canvasAssignmentId: null,
     });
     res.status(201).json(assignment);
   })

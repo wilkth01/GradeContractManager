@@ -94,6 +94,7 @@ export function addClass(instructorId: number, overrides: Partial<Class> = {}): 
     absenceFailureThreshold: null,
     participationBar: null,
     canvasCourseId: null,
+    canvasAbsenceAssignmentId: null,
     ...overrides,
   };
   db.classes.push(cls);
@@ -109,6 +110,7 @@ export function addAssignment(classId: number, overrides: Partial<Assignment> = 
     scoringType: "status",
     displayOrder: db.assignments.filter((a) => a.classId === classId).length,
     dueDate: null,
+    canvasAssignmentId: null,
     ...overrides,
   };
   db.assignments.push(assignment);
@@ -169,10 +171,28 @@ const classStorage = {
     const user = db.users.find((u) => u.id === userId);
     if (user) user.canvasUserId = canvasUserId;
   },
-  async linkCanvasCourse(classId: number, canvasCourseId: number | null) {
+  async linkCanvasCourse(
+    classId: number,
+    canvasCourseId: number | null,
+    canvasAbsenceAssignmentId?: number | null
+  ) {
     const cls = db.classes.find((c) => c.id === classId)!;
     cls.canvasCourseId = canvasCourseId;
+    if (canvasAbsenceAssignmentId !== undefined) {
+      cls.canvasAbsenceAssignmentId = canvasAbsenceAssignmentId;
+    }
     return cls;
+  },
+  async setCanvasAssignmentIds(
+    classId: number,
+    mappings: { assignmentId: number; canvasAssignmentId: number | null }[]
+  ) {
+    for (const mapping of mappings) {
+      const assignment = db.assignments.find(
+        (a) => a.id === mapping.assignmentId && a.classId === classId
+      );
+      if (assignment) assignment.canvasAssignmentId = mapping.canvasAssignmentId;
+    }
   },
   async getClass(classId: number) {
     return db.classes.find((c) => c.id === classId);

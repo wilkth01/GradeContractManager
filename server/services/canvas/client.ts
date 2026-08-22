@@ -25,6 +25,30 @@ export interface CanvasUser {
   email?: string;
 }
 
+export interface CanvasAssignment {
+  id: number;
+  name: string;
+  points_possible: number | null;
+  assignment_group_id: number;
+  published: boolean;
+  omit_from_final_grade?: boolean;
+}
+
+export interface CanvasAssignmentGroup {
+  id: number;
+  name: string;
+}
+
+export interface CanvasSubmission {
+  user_id: number;
+  assignment_id: number;
+  score: number | null;
+  grade: string | null;
+  workflow_state: string;
+  submitted_at: string | null;
+  excused?: boolean;
+}
+
 export interface CanvasCourse {
   id: number;
   name: string;
@@ -91,6 +115,45 @@ export class CanvasClient {
     return this.list<CanvasUser>(
       `/courses/${courseId}/users?enrollment_type[]=student&per_page=100`
     );
+  }
+
+  /** Published assignments in a course, with their group. */
+  async courseAssignments(courseId: number): Promise<CanvasAssignment[]> {
+    const all = await this.list<CanvasAssignment>(
+      `/courses/${courseId}/assignments?per_page=100`
+    );
+    return all.filter((a) => a.published);
+  }
+
+  async assignmentGroups(courseId: number): Promise<CanvasAssignmentGroup[]> {
+    return this.list<CanvasAssignmentGroup>(
+      `/courses/${courseId}/assignment_groups?per_page=100`
+    );
+  }
+
+  /**
+   * Submissions for specific assignments across the whole course.
+   *
+   * Canvas caps the query string, so assignment ids are requested in batches
+   * rather than all at once.
+   */
+  async submissions(courseId: number, assignmentIds: number[]): Promise<CanvasSubmission[]> {
+    if (assignmentIds.length === 0) return [];
+
+    const BATCH = 20;
+    const results: CanvasSubmission[] = [];
+
+    for (let i = 0; i < assignmentIds.length; i += BATCH) {
+      const batch = assignmentIds.slice(i, i + BATCH);
+      const query = batch.map((id) => `assignment_ids[]=${id}`).join("&");
+      results.push(
+        ...(await this.list<CanvasSubmission>(
+          `/courses/${courseId}/students/submissions?student_ids[]=all&${query}&per_page=100`
+        ))
+      );
+    }
+
+    return results;
   }
 
   /**
