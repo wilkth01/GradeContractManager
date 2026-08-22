@@ -16,8 +16,7 @@ export type EntityType =
   | "grade_contract"
   | "student_contract"
   | "assignment_progress"
-  | "attendance"
-  | "engagement_intention";
+  | "attendance";
 
 export interface AuditLogParams {
   userId: number | null;

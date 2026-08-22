@@ -1,4 +1,5 @@
 import { User, Assignment, AssignmentProgress } from "@shared/schema";
+import { AssignmentStatus } from "@shared/constants";
 
 /**
  * Normalized student data from any source (CSV or future API)
@@ -54,12 +55,14 @@ export interface StudentMatchResult {
  * Configuration for grade conversion thresholds
  */
 export interface GradeConversionConfig {
+  /** Score thresholds, on a 0-100 scale, for landing in each status. */
   statusThresholds: {
-    notStarted: number;     // Below this = 0 (Not Submitted)
-    inProgress: number;     // At or above = 1 (Not Submitted)
-    completed: number;      // At or above = 2 (Work-in-Progress)
-    excellent: number;      // At or above = 3 (Successfully Completed)
+    /** At or above this counts as Successfully Completed. */
+    complete: number;
+    /** Above this (and below complete) counts as Work-in-Progress. */
+    workInProgress: number;
   };
+  /** First letter of a letter grade to an AssignmentStatus value. */
   letterGradeMap: Record<string, number>;
 }
 
@@ -68,19 +71,32 @@ export interface GradeConversionConfig {
  */
 export const DEFAULT_GRADE_CONFIG: GradeConversionConfig = {
   statusThresholds: {
-    notStarted: 1,    // 0 = Not Submitted
-    inProgress: 1,    // 1+ = Not Submitted (same as 0)
-    completed: 1,     // 1-69 = Work-in-Progress
-    excellent: 70     // 70+ = Successfully Completed
+    complete: 70,       // 70+ = Successfully Completed
+    workInProgress: 0,  // any score above 0 = Work-in-Progress
   },
   letterGradeMap: {
-    'A': 3,
-    'B': 3,
-    'C': 2,
-    'D': 2,
-    'F': 0
-  }
+    A: AssignmentStatus.COMPLETE,
+    B: AssignmentStatus.COMPLETE,
+    C: AssignmentStatus.WORK_IN_PROGRESS,
+    D: AssignmentStatus.WORK_IN_PROGRESS,
+    F: AssignmentStatus.MISSING,
+  },
 };
+
+/**
+ * How the values in a Canvas column should be read.
+ *
+ * 'numeric_scale' is the pass-through for columns already on the portal 0-4
+ * scale, such as Perusall reading scores. The others rescale, so importing a
+ * 0-4 column as 'points' would divide it by 100.
+ */
+export type GradingType =
+  | 'points'
+  | 'percentage'
+  | 'letter'
+  | 'status'
+  | 'numerical_status'
+  | 'numeric_scale';
 
 /**
  * Mapping between Canvas column and portal assignment
@@ -88,12 +104,17 @@ export const DEFAULT_GRADE_CONFIG: GradeConversionConfig = {
 export interface AssignmentMapping {
   canvasColumn: string;
   portalAssignment: Assignment | null;
-  gradingType: 'points' | 'percentage' | 'letter' | 'status' | 'numerical_status';
-  mappingTarget?: 'assignment' | 'absences';
+  gradingType: GradingType;
+  mappingTarget?: 'assignment';
 }
 
 /**
- * A single absence change to be applied
+ * A single absence change to be applied.
+ *
+ * Retained as an empty shape for the preview payload. Importing a bare absence
+ * count no longer works now that attendance is recorded per class session --
+ * there is no session for a count to attach to, and the old path deleted the
+ * student real attendance history to fake one. Roll call is taken in the app.
  */
 export interface AbsenceChange {
   studentId: number;
@@ -114,6 +135,8 @@ export interface GradeChange {
   newValue: string;
   convertedStatus: number | null;
   convertedNumeric: number | null;
+  /** Set when the source value could not be represented exactly. */
+  warning?: string;
 }
 
 /**

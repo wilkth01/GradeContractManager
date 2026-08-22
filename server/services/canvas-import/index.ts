@@ -1,4 +1,5 @@
 import { storage } from "../../storage";
+import { MAX_NUMERIC_GRADE } from "@shared/constants";
 import { StudentMatcher } from "./student-matcher";
 import { GradeConverter } from "./grade-converter";
 import {
@@ -54,7 +55,7 @@ export class CanvasImportService {
 
     // Generate grade changes
     const gradeChanges: GradeChange[] = [];
-    const activeMappings = mappings.filter(m => m.portalAssignment !== null && m.mappingTarget !== 'absences');
+    const activeMappings = mappings.filter(m => m.portalAssignment !== null);
 
     for (const grade of normalizedData.grades) {
       // Find the student match
@@ -87,11 +88,19 @@ export class CanvasImportService {
       // Convert grade based on assignment scoring type
       let convertedStatus: number | null = null;
       let convertedNumeric: number | null = null;
+      let warning: string | undefined;
 
       if (portalAssignment.scoringType === 'status') {
         convertedStatus = this.gradeConverter.toStatus(grade.rawValue, mapping.gradingType);
       } else {
-        convertedNumeric = this.gradeConverter.toNumeric(grade.rawValue, mapping.gradingType);
+        const converted = this.gradeConverter.toNumericDetailed(
+          grade.rawValue,
+          mapping.gradingType
+        );
+        convertedNumeric = converted.value;
+        if (converted.clamped) {
+          warning = `Source value ${grade.rawValue} is outside the 0-${MAX_NUMERIC_GRADE} scale and was clamped to ${converted.value}`;
+        }
       }
 
       // Determine current value string for display
@@ -112,43 +121,9 @@ export class CanvasImportService {
         currentValue,
         newValue: grade.rawValue,
         convertedStatus,
-        convertedNumeric
+        convertedNumeric,
+        warning
       });
-    }
-
-    // Generate absence changes
-    const absenceChanges: AbsenceChange[] = [];
-    const absenceMapping = mappings.find(m => m.mappingTarget === 'absences');
-
-    if (absenceMapping) {
-      for (const matchResult of matchedStudents) {
-        if (!matchResult.matchedStudent) continue;
-
-        // Find the grade entry for this student + absence column
-        const gradeEntry = normalizedData.grades.find(
-          g => g.studentSourceId === matchResult.csvStudent.sourceId &&
-               g.assignmentSourceId === absenceMapping.canvasColumn
-        );
-
-        const newAbsences = gradeEntry ? parseInt(gradeEntry.rawValue, 10) : 0;
-        if (isNaN(newAbsences)) continue;
-
-        // Get current absence count
-        const attendanceRecords = await storage.getAttendanceForStudentInClass(
-          matchResult.matchedStudent.id,
-          classId
-        );
-        const currentAbsences = attendanceRecords.filter(r => !r.isPresent).length;
-
-        if (currentAbsences !== newAbsences) {
-          absenceChanges.push({
-            studentId: matchResult.matchedStudent.id,
-            studentName: matchResult.matchedStudent.fullName,
-            currentAbsences,
-            newAbsences,
-          });
-        }
-      }
     }
 
     // Calculate summary
@@ -157,7 +132,7 @@ export class CanvasImportService {
       matchedStudents: matchedStudents.length,
       unmatchedStudents: unmatchedStudents.length,
       totalGradeUpdates: gradeChanges.length,
-      totalAbsenceUpdates: absenceChanges.length,
+      totalAbsenceUpdates: 0,
       assignmentsMapped: activeMappings.length
     };
 
@@ -165,7 +140,7 @@ export class CanvasImportService {
       matchedStudents,
       unmatchedStudents,
       gradeChanges,
-      absenceChanges,
+      absenceChanges: [],
       summary
     };
   }
@@ -173,15 +148,10 @@ export class CanvasImportService {
   /**
    * Execute the import using approved grade changes
    */
-  async executeImport(
-    gradeChanges: GradeChange[],
-    classId: number,
-    absenceChanges?: AbsenceChange[]
-  ): Promise<ImportResult> {
+  async executeImport(gradeChanges: GradeChange[], classId: number): Promise<ImportResult> {
     const processedStudents = new Set<number>();
     const errors: { student: string; assignment: string; error: string }[] = [];
     let processedGrades = 0;
-    let processedAbsences = 0;
 
     for (const change of gradeChanges) {
       try {
@@ -213,28 +183,11 @@ export class CanvasImportService {
       }
     }
 
-    // Process absence changes
-    if (absenceChanges) {
-      for (const change of absenceChanges) {
-        try {
-          await storage.setStudentAbsences(change.studentId, classId, change.newAbsences);
-          processedStudents.add(change.studentId);
-          processedAbsences++;
-        } catch (error) {
-          errors.push({
-            student: change.studentName,
-            assignment: 'Absences',
-            error: error instanceof Error ? error.message : 'Unknown error'
-          });
-        }
-      }
-    }
-
     return {
       success: errors.length === 0,
       processedStudents: processedStudents.size,
       processedGrades,
-      processedAbsences,
+      processedAbsences: 0,
       skippedStudents: [],
       errors
     };

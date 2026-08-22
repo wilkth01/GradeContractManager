@@ -1,4 +1,22 @@
 import { GradeConversionConfig, DEFAULT_GRADE_CONFIG } from "./types";
+import {
+  AssignmentStatus,
+  MAX_NUMERIC_GRADE,
+  getAssignmentStatusLabel,
+} from "@shared/constants";
+
+/**
+ * The 0-3 scale some Canvas columns use, mapped onto the three stored states.
+ *
+ * This is the same collapse applied to existing assignment_progress rows: the
+ * old scheme had two values that both displayed as "Not Submitted".
+ */
+const CanvasNumericalStatus: Record<number, number> = {
+  0: AssignmentStatus.MISSING,
+  1: AssignmentStatus.MISSING,
+  2: AssignmentStatus.WORK_IN_PROGRESS,
+  3: AssignmentStatus.COMPLETE,
+};
 
 /**
  * Service for converting Canvas grades to portal format
@@ -12,11 +30,7 @@ export class GradeConverter {
   }
 
   /**
-   * Convert a Canvas grade to portal status (0-3)
-   * 0 = Not Submitted
-   * 1 = Not Submitted
-   * 2 = Work-in-Progress
-   * 3 = Successfully Completed
+   * Convert a Canvas grade to an AssignmentStatus value.
    */
   toStatus(rawValue: string, gradingType: string): number {
     const value = rawValue.toLowerCase().trim();
@@ -26,11 +40,19 @@ export class GradeConverter {
       return 0;
     }
 
-    // Handle raw numerical status (0-3 maps directly)
+    // A 0-4 column mapped onto a status assignment: read it as a proportion of
+    // the scale and apply the usual score thresholds.
+    if (gradingType === 'numeric_scale') {
+      const numeric = parseFloat(rawValue);
+      if (isNaN(numeric) || numeric <= 0) return AssignmentStatus.MISSING;
+      return this.numericToStatus(String((numeric / MAX_NUMERIC_GRADE) * 100));
+    }
+
+    // Canvas columns using the older 0-3 convention. 0 and 1 both meant Not
+    // Submitted, 2 meant Work-in-Progress and 3 meant Successfully Completed,
+    // so the same collapse the stored values got is applied here.
     if (gradingType === 'numerical_status') {
-      const num = parseInt(rawValue, 10);
-      if (isNaN(num) || num < 0 || num > 3) return 0;
-      return num;
+      return CanvasNumericalStatus[parseInt(rawValue, 10)] ?? AssignmentStatus.MISSING;
     }
 
     // Handle numeric grades (points/percentage)
@@ -48,6 +70,28 @@ export class GradeConverter {
   }
 
   /**
+   * Convert a Canvas grade to a portal numeric score, reporting whether the
+   * source value had to be clamped to fit the scale.
+   */
+  toNumericDetailed(
+    rawValue: string,
+    gradingType: string
+  ): { value: number; clamped: boolean } {
+    if (gradingType === 'numeric_scale') {
+      const numeric = parseFloat(rawValue);
+      if (isNaN(numeric)) return { value: 0, clamped: false };
+
+      const bounded = Math.min(MAX_NUMERIC_GRADE, Math.max(0, numeric));
+      return {
+        value: Math.round(bounded * 100) / 100,
+        clamped: numeric !== bounded,
+      };
+    }
+
+    return { value: this.toNumeric(rawValue, gradingType), clamped: false };
+  }
+
+  /**
    * Convert a Canvas grade to portal numeric score (0-4)
    */
   toNumeric(rawValue: string, gradingType: string): number {
@@ -58,11 +102,21 @@ export class GradeConverter {
       return 0;
     }
 
-    // Handle raw numerical status - map 0-3 to 0-4 scale
+    // Already on the portal scale -- clamp only.
+    if (gradingType === 'numeric_scale') {
+      const numeric = parseFloat(rawValue);
+      if (isNaN(numeric)) return 0;
+      return Math.round(Math.min(MAX_NUMERIC_GRADE, Math.max(0, numeric)) * 100) / 100;
+    }
+
+    // Canvas 0-3 columns, rescaled onto the numeric grading scale
     if (gradingType === 'numerical_status') {
       const num = parseInt(rawValue, 10);
       if (isNaN(num) || num < 0) return 0;
-      return Math.min(4, Math.round((num / 3) * 4 * 10) / 10);
+      return Math.min(
+        MAX_NUMERIC_GRADE,
+        Math.round((num / 3) * MAX_NUMERIC_GRADE * 10) / 10
+      );
     }
 
     // Handle numeric grades directly
@@ -70,8 +124,11 @@ export class GradeConverter {
       const numeric = parseFloat(rawValue);
       if (isNaN(numeric)) return 0;
 
-      // Scale from 0-100 to 0-4
-      return Math.min(4, Math.round((numeric / 100) * 4 * 10) / 10);
+      // Scale from 0-100 onto the numeric grading scale
+      return Math.min(
+        MAX_NUMERIC_GRADE,
+        Math.round((numeric / 100) * MAX_NUMERIC_GRADE * 10) / 10
+      );
     }
 
     // Handle letter grades
@@ -84,27 +141,25 @@ export class GradeConverter {
   }
 
   /**
-   * Convert numeric grade (0-100) to status (0-3)
+   * Convert a numeric grade (0-100) to an AssignmentStatus value.
    */
   private numericToStatus(rawValue: string): number {
     const numeric = parseFloat(rawValue);
-    if (isNaN(numeric)) return 0;
+    if (isNaN(numeric)) return AssignmentStatus.MISSING;
 
     const { statusThresholds } = this.config;
 
-    if (numeric >= statusThresholds.excellent) return 3;
-    if (numeric >= statusThresholds.completed) return 2;
-    if (numeric >= statusThresholds.inProgress) return 1;
-    if (numeric > 0) return 1; // Any work = at least in progress
-    return 0;
+    if (numeric >= statusThresholds.complete) return AssignmentStatus.COMPLETE;
+    if (numeric > statusThresholds.workInProgress) return AssignmentStatus.WORK_IN_PROGRESS;
+    return AssignmentStatus.MISSING;
   }
 
   /**
-   * Convert letter grade to status (0-3)
+   * Convert a letter grade to an AssignmentStatus value.
    */
   private letterToStatus(rawValue: string): number {
     const letter = rawValue.trim().charAt(0).toUpperCase();
-    return this.config.letterGradeMap[letter] ?? 1;
+    return this.config.letterGradeMap[letter] ?? AssignmentStatus.WORK_IN_PROGRESS;
   }
 
   /**
@@ -137,26 +192,23 @@ export class GradeConverter {
   }
 
   /**
-   * Convert text status to status number (0-3)
+   * Convert a free-text status to an AssignmentStatus value.
    */
   private textToStatus(value: string): number {
-    // Successfully Completed indicators
     if (/excellent|outstanding|exceptional|perfect|complete|done|submitted|finished|passed|satisfactory/i.test(value)) {
-      return 3;
+      return AssignmentStatus.COMPLETE;
     }
 
-    // Work-in-Progress indicators
     if (/progress|partial|incomplete|pending|started|working/i.test(value)) {
-      return 2;
+      return AssignmentStatus.WORK_IN_PROGRESS;
     }
 
-    // Not Submitted indicators
     if (/missing|not\s*submitted|absent|none|failed|0/i.test(value)) {
-      return 0;
+      return AssignmentStatus.MISSING;
     }
 
-    // Default to Work-in-Progress for any unrecognized non-empty value
-    return 2;
+    // Anything else non-empty is treated as work started but not finished.
+    return AssignmentStatus.WORK_IN_PROGRESS;
   }
 
   /**
@@ -165,28 +217,21 @@ export class GradeConverter {
   private textToNumeric(value: string): number {
     const status = this.textToStatus(value);
 
-    // Map status to numeric
     const statusToNumeric: Record<number, number> = {
-      0: 0,
-      1: 2,
-      2: 3,
-      3: 4
+      [AssignmentStatus.MISSING]: 0,
+      [AssignmentStatus.WORK_IN_PROGRESS]: 2,
+      [AssignmentStatus.COMPLETE]: MAX_NUMERIC_GRADE,
     };
 
     return statusToNumeric[status] ?? 2;
   }
 
   /**
-   * Get human-readable status label
+   * Get a human-readable status label. Delegates to the shared labels so the
+   * importer and the UI can never drift apart.
    */
   static getStatusLabel(status: number): string {
-    const labels: Record<number, string> = {
-      0: 'Not Submitted',
-      1: 'Not Submitted',
-      2: 'Work-in-Progress',
-      3: 'Successfully Completed'
-    };
-    return labels[status] ?? 'Unknown';
+    return getAssignmentStatusLabel(status);
   }
 
   /**

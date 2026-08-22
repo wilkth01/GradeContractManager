@@ -1,0 +1,69 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1768931261733,
+      "tag": "0000_absent_master_chief",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1787420381230,
+      "tag": "0001_ancient_thanos",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787420382230,
+      "tag": "0002_collapse_assignment_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1787424453688,
+      "tag": "0003_sessions_and_participation",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787426847331,
+      "tag": "0004_qwickly_participation_split",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787428262014,
+      "tag": "0005_absence_penalty_thresholds",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787429042870,
+      "tag": "0006_participation_bar",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787437032897,
+      "tag": "0007_canvas_connection",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787438263572,
+      "tag": "0008_invitation_account_binding",
+      "breakpoints": true
+    }
+  ]
+}
