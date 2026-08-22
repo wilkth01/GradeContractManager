@@ -116,7 +116,7 @@ describe("Schema Validation", () => {
           { id: 1, comments: "Must complete with excellence" },
           { id: 2 },
         ],
-        requiredEngagementIntentions: 10,
+        requiredParticipationSessions: 10,
         maxAbsences: 2,
       };
 
@@ -135,7 +135,7 @@ describe("Schema Validation", () => {
       const result = insertGradeContractSchema.safeParse(minimalContract);
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.requiredEngagementIntentions).toBe(0);
+        expect(result.data.requiredParticipationSessions).toBe(0);
         expect(result.data.maxAbsences).toBe(0);
       }
     });
@@ -251,5 +251,59 @@ describe("Schema Validation", () => {
       const result = resetPasswordSchema.safeParse(invalidReset);
       expect(result.success).toBe(false);
     });
+  });
+});
+
+describe("categoryRequirement inside a grade contract", () => {
+  const base = {
+    classId: 1,
+    grade: "A" as const,
+    version: 1,
+    assignments: [{ id: 1 }],
+  };
+
+  it("accepts an average-only category (the Perusall shape)", () => {
+    const result = insertGradeContractSchema.safeParse({
+      ...base,
+      categoryRequirements: [{ category: "Perusall", minAverage: 3.5 }],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a count-only category", () => {
+    const result = insertGradeContractSchema.safeParse({
+      ...base,
+      categoryRequirements: [{ category: "Essays", required: 4 }],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts both together", () => {
+    const result = insertGradeContractSchema.safeParse({
+      ...base,
+      categoryRequirements: [{ category: "Perusall", required: 6, minAverage: 3 }],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a category that requires nothing at all", () => {
+    const result = insertGradeContractSchema.safeParse({
+      ...base,
+      categoryRequirements: [{ category: "Perusall" }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an average above the top of the scale", () => {
+    const result = insertGradeContractSchema.safeParse({
+      ...base,
+      categoryRequirements: [{ category: "Perusall", minAverage: 5 }],
+    });
+
+    expect(result.success).toBe(false);
   });
 });
