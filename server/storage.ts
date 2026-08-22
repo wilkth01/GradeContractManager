@@ -15,7 +15,7 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   setCanvasToken(userId: number, encrypted: string | null): Promise<void>;
   setCanvasUserId(userId: number, canvasUserId: number | null): Promise<void>;
-  linkCanvasCourse(classId: number, canvasCourseId: number | null, canvasAbsenceAssignmentId?: number | null): Promise<Class>;
+  linkCanvasCourse(classId: number, updates: { canvasCourseId?: number | null; canvasAbsenceAssignmentId?: number | null }): Promise<Class>;
   setCanvasAssignmentIds(classId: number, mappings: { assignmentId: number; canvasAssignmentId: number | null }[]): Promise<void>;
 
   createClass(classData: Omit<Class, "id" | "isArchived">): Promise<Class>;
@@ -128,14 +128,17 @@ export class DatabaseStorage implements IStorage {
 
   async linkCanvasCourse(
     classId: number,
-    canvasCourseId: number | null,
-    canvasAbsenceAssignmentId?: number | null
+    updates: { canvasCourseId?: number | null; canvasAbsenceAssignmentId?: number | null }
   ): Promise<Class> {
     const [updated] = await db
       .update(classes)
       .set({
-        canvasCourseId,
-        ...(canvasAbsenceAssignmentId !== undefined ? { canvasAbsenceAssignmentId } : {}),
+        ...(updates.canvasCourseId !== undefined
+          ? { canvasCourseId: updates.canvasCourseId }
+          : {}),
+        ...(updates.canvasAbsenceAssignmentId !== undefined
+          ? { canvasAbsenceAssignmentId: updates.canvasAbsenceAssignmentId }
+          : {}),
       })
       .where(eq(classes.id, classId))
       .returning();

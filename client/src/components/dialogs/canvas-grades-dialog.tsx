@@ -87,6 +87,24 @@ export function CanvasGradesDialog({ classId }: Props) {
     retry: false,
   });
 
+  const setAbsenceSource = useMutation({
+    mutationFn: async (canvasAbsenceAssignmentId: number | null) => {
+      // Partial update: the course link is left untouched.
+      await apiRequest("PUT", `/api/classes/${classId}/canvas/link`, {
+        canvasAbsenceAssignmentId,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: [`/api/classes/${classId}/canvas/assignments`],
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/classes/${classId}`] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not set", description: err.message, variant: "destructive" });
+    },
+  });
+
   const setMapping = useMutation({
     mutationFn: async (mapping: { assignmentId: number; canvasAssignmentId: number | null }) => {
       await apiRequest("PUT", `/api/classes/${classId}/canvas/assignment-map`, {
@@ -292,6 +310,36 @@ export function CanvasGradesDialog({ classId }: Props) {
                   {mappedCount} of {data.portalAssignments.length} assignments mapped. Every
                   Canvas assignment is listed, whatever group it is filed under.
                 </p>
+
+                <div className="border rounded-md p-3 space-y-2">
+                  <p className="text-sm font-medium">Absence totals</p>
+                  <p className="text-xs text-muted-foreground">
+                    Qwickly owns attendance and can write a total into a Canvas gradebook
+                    column. Point at that column and absences pull along with grades.
+                  </p>
+                  <Select
+                    value={
+                      data.absenceCanvasAssignmentId
+                        ? String(data.absenceCanvasAssignmentId)
+                        : "__none__"
+                    }
+                    onValueChange={(value) =>
+                      setAbsenceSource.mutate(value === "__none__" ? null : parseInt(value))
+                    }
+                  >
+                    <SelectTrigger className="w-full sm:w-96">
+                      <SelectValue placeholder="Not set" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Not set</SelectItem>
+                      {data.canvasAssignments.map((canvas) => (
+                        <SelectItem key={canvas.id} value={String(canvas.id)}>
+                          {canvas.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <ScrollArea className="max-h-[45vh] border rounded-md">
                   <div className="divide-y">
                     {data.portalAssignments.map((assignment) => (

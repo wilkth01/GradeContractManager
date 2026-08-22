@@ -55,7 +55,6 @@ import { InviteStudentsDialog } from "@/components/dialogs/invite-students-dialo
 import { ImportStudentsDialog } from "@/components/dialogs/import-students-dialog";
 import { ViewStudentProfileDialog } from "@/components/dialogs/view-student-profile-dialog";
 import { UpdateAssignmentStatusDialog } from "@/components/dialogs/update-assignment-status-dialog";
-import { ImportCanvasGradesDialog } from "@/components/dialogs/import-canvas-grades-dialog";
 import { ManageAttendanceDialog } from "@/components/dialogs/manage-attendance-dialog";
 import { CanvasSettingsDialog } from "@/components/dialogs/canvas-settings-dialog";
 import { CanvasGradesDialog } from "@/components/dialogs/canvas-grades-dialog";
@@ -724,7 +723,6 @@ export default function ClassManagement() {
                   <CanvasSettingsDialog classId={parsedClassId} />
                   <CanvasGradesDialog classId={parsedClassId} />
                   <SendContractUpdatesDialog classId={parsedClassId} />
-                  <ImportCanvasGradesDialog classId={parsedClassId} />
                 </div>
               </CardHeader>
               <CardContent>

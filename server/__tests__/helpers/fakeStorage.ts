@@ -173,13 +173,12 @@ const classStorage = {
   },
   async linkCanvasCourse(
     classId: number,
-    canvasCourseId: number | null,
-    canvasAbsenceAssignmentId?: number | null
+    updates: { canvasCourseId?: number | null; canvasAbsenceAssignmentId?: number | null }
   ) {
     const cls = db.classes.find((c) => c.id === classId)!;
-    cls.canvasCourseId = canvasCourseId;
-    if (canvasAbsenceAssignmentId !== undefined) {
-      cls.canvasAbsenceAssignmentId = canvasAbsenceAssignmentId;
+    if (updates.canvasCourseId !== undefined) cls.canvasCourseId = updates.canvasCourseId;
+    if (updates.canvasAbsenceAssignmentId !== undefined) {
+      cls.canvasAbsenceAssignmentId = updates.canvasAbsenceAssignmentId;
     }
     return cls;
   },

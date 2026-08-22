@@ -9,7 +9,6 @@ import invitationsRouter from "./invitations";
 import analyticsRouter from "./analytics";
 import accountRecoveryRouter from "./account-recovery";
 import auditRouter from "./audit";
-import canvasImportRouter from "./canvas-import";
 import canvasRouter from "./canvas";
 import messagesRouter from "./messages";
 
@@ -34,7 +33,6 @@ export function registerRouteModules(app: Express): void {
   app.use(analyticsRouter);
   app.use(accountRecoveryRouter);
   app.use(auditRouter);
-  app.use(canvasImportRouter);
   app.use(canvasRouter);
   app.use(messagesRouter);
 }

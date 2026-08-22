@@ -1044,3 +1044,56 @@ describe("Canvas grade pull", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("Canvas course link", () => {
+  it("sets the absence source without disturbing the course link", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id, { canvasCourseId: 52959 });
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent
+      .put(`/api/classes/${cls.id}/canvas/link`)
+      .send({ canvasAbsenceAssignmentId: 777 });
+
+    expect(res.status).toBe(200);
+    expect(cls.canvasAbsenceAssignmentId).toBe(777);
+    // Omitting the course id must not unlink the course.
+    expect(cls.canvasCourseId).toBe(52959);
+  });
+
+  it("clears the absence source when explicitly set to null", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id, { canvasCourseId: 52959, canvasAbsenceAssignmentId: 777 });
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    await agent
+      .put(`/api/classes/${cls.id}/canvas/link`)
+      .send({ canvasAbsenceAssignmentId: null });
+
+    expect(cls.canvasAbsenceAssignmentId).toBeNull();
+    expect(cls.canvasCourseId).toBe(52959);
+  });
+
+  it("rejects a request that would change nothing", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.put(`/api/classes/${cls.id}/canvas/link`).send({});
+
+    expect(res.status).toBe(400);
+  });
+
+  it("blocks a non-owner from relinking a class", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id);
+    const agent = await loginAs(app, "other", PASSWORD);
+
+    const res = await agent
+      .put(`/api/classes/${cls.id}/canvas/link`)
+      .send({ canvasCourseId: 1 });
+
+    expect(res.status).toBe(403);
+  });
+});

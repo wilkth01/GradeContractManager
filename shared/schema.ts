@@ -311,10 +311,19 @@ export const importRosterSchema = z.object({
   createMissing: z.boolean().default(true),
 });
 
-export const linkCanvasCourseSchema = z.object({
-  canvasCourseId: z.number().int().positive().nullable(),
-  canvasAbsenceAssignmentId: z.number().int().positive().nullable().optional(),
-});
+// A partial update: omitting a field leaves it alone. Requiring the course id
+// on every call would mean a request that only sets the absence source could
+// unlink the course by forgetting to resend it.
+export const linkCanvasCourseSchema = z
+  .object({
+    canvasCourseId: z.number().int().positive().nullable().optional(),
+    canvasAbsenceAssignmentId: z.number().int().positive().nullable().optional(),
+  })
+  .refine(
+    (data) =>
+      data.canvasCourseId !== undefined || data.canvasAbsenceAssignmentId !== undefined,
+    { message: "Nothing to update" }
+  );
 
 export const mapCanvasAssignmentsSchema = z.object({
   mappings: z.array(

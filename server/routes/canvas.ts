@@ -115,14 +115,10 @@ router.put(
   asyncHandler(async (req, res) => {
     const parsed = linkCanvasCourseSchema.safeParse(req.body);
     if (!parsed.success) {
-      throw new BadRequestError("A Canvas course id is required");
+      throw new BadRequestError("Nothing to update");
     }
 
-    const updated = await storage.linkCanvasCourse(
-      req.cls!.id,
-      parsed.data.canvasCourseId,
-      parsed.data.canvasAbsenceAssignmentId
-    );
+    const updated = await storage.linkCanvasCourse(req.cls!.id, parsed.data);
     res.json(updated);
   })
 );

@@ -9,11 +9,23 @@
 export class CanvasError extends Error {
   constructor(
     message: string,
-    public readonly status: number
+    public readonly status: number,
+    public readonly rateLimited = false
   ) {
     super(message);
     this.name = "CanvasError";
   }
+}
+
+/**
+ * Canvas signals a throttle as 403 with a rate-limit body, not 429, so a
+ * throttled request is otherwise indistinguishable from a permissions failure
+ * -- and telling an instructor they lack access when they are simply pulling
+ * too fast sends them looking in the wrong place entirely.
+ */
+function isRateLimit(status: number, body: string): boolean {
+  if (status === 429) return true;
+  return status === 403 && /rate limit/i.test(body);
 }
 
 export interface CanvasUser {
@@ -55,6 +67,11 @@ export interface CanvasCourse {
   course_code?: string;
 }
 
+const MAX_RATE_LIMIT_RETRIES = 3;
+const RATE_LIMIT_BACKOFF_MS = 2000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export class CanvasClient {
   constructor(
     private readonly token: string,
@@ -65,11 +82,30 @@ export class CanvasClient {
     return { Authorization: `Bearer ${this.token}` };
   }
 
-  private async request(path: string): Promise<{ data: unknown; nextUrl: string | null }> {
+  private async request(
+    path: string,
+    attempt = 0
+  ): Promise<{ data: unknown; nextUrl: string | null }> {
     const url = path.startsWith("http") ? path : `${this.baseUrl}/api/v1${path}`;
     const response = await fetch(url, { headers: this.headers() });
 
     if (!response.ok) {
+      const body = await response.text().catch(() => "");
+
+      if (isRateLimit(response.status, body)) {
+        // A pull across a full roster can trip the throttle partway. Backing off
+        // and retrying is better than surfacing a half-finished import.
+        if (attempt < MAX_RATE_LIMIT_RETRIES) {
+          await sleep(RATE_LIMIT_BACKOFF_MS * (attempt + 1));
+          return this.request(path, attempt + 1);
+        }
+        throw new CanvasError(
+          "Canvas is rate limiting these requests. Wait a minute and try again.",
+          response.status,
+          true
+        );
+      }
+
       throw new CanvasError(
         response.status === 401
           ? "Canvas rejected the access token"
@@ -176,9 +212,13 @@ export class CanvasClient {
     });
 
     if (!response.ok) {
+      const body = await response.text().catch(() => "");
       throw new CanvasError(
-        `Canvas refused the message (${response.status})`,
-        response.status
+        isRateLimit(response.status, body)
+          ? "Canvas is rate limiting these messages. Wait a minute and send the rest."
+          : `Canvas refused the message (${response.status})`,
+        response.status,
+        isRateLimit(response.status, body)
       );
     }
   }
