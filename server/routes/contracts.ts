@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
-import { insertGradeContractSchema } from "@shared/schema";
+import { insertGradeContractSchema, importContractsSchema } from "@shared/schema";
 import {
   requireClassOwner,
   requireClassMember,
@@ -44,6 +44,90 @@ router.post(
       categoryRequirements: parsed.data.categoryRequirements ?? null,
     });
     res.status(201).json(contract);
+  })
+);
+
+/**
+ * Create or replace a whole tier of contracts in one go, from a summary table.
+ *
+ * The client has already resolved each row of the pasted table to a module
+ * group or an assignment, and the instructor has confirmed it. Every id in that
+ * result is still re-checked here: the browser is not the authority on which
+ * assignments belong to this class, and a category naming a group that does not
+ * exist would silently require nothing of anybody.
+ *
+ * A grade that already has a contract is published as a new version rather than
+ * overwritten, so the previous terms stay on record and students stay where
+ * they are -- the same path an edit takes.
+ */
+router.post(
+  "/api/classes/:classId/contracts/import",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const parsed = importContractsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new BadRequestError(
+        parsed.error.issues[0]?.message ?? "Invalid contract data"
+      );
+    }
+
+    const classAssignments = await storage.getAssignmentsByClass(req.cls!.id);
+    const ownedIds = new Set(classAssignments.map((a) => a.id));
+    const groups = new Set(
+      classAssignments.map((a) => a.moduleGroup || "Uncategorized")
+    );
+
+    const grades = parsed.data.contracts.map((c) => c.grade);
+    if (new Set(grades).size !== grades.length) {
+      throw new BadRequestError("Each grade may appear only once");
+    }
+
+    for (const draft of parsed.data.contracts) {
+      for (const requirement of draft.assignments) {
+        if (!ownedIds.has(requirement.id)) {
+          throw new BadRequestError("That assignment does not belong to this class");
+        }
+      }
+      for (const category of draft.categoryRequirements) {
+        if (!groups.has(category.category)) {
+          throw new BadRequestError(
+            `No module group named "${category.category}" in this class`
+          );
+        }
+      }
+    }
+
+    const existing = await storage.getContractsByClass(req.cls!.id);
+    const created: string[] = [];
+    const updated: { grade: string; movedStudents: number }[] = [];
+
+    for (const draft of parsed.data.contracts) {
+      const terms = {
+        classId: req.cls!.id,
+        grade: draft.grade,
+        assignments: draft.assignments,
+        requiredParticipationSessions: draft.requiredParticipationSessions,
+        maxAbsences: draft.maxAbsences,
+        categoryRequirements: draft.categoryRequirements.length
+          ? draft.categoryRequirements
+          : null,
+      };
+
+      // The current version of a grade is its highest-numbered row.
+      const current = existing
+        .filter((c) => c.grade === draft.grade)
+        .sort((a, b) => b.version - a.version)[0];
+
+      if (current) {
+        const result = await storage.publishContractVersion(current, terms);
+        updated.push({ grade: draft.grade, movedStudents: result.movedStudents });
+      } else {
+        await storage.createGradeContract({ ...terms, version: 1 });
+        created.push(draft.grade);
+      }
+    }
+
+    res.status(201).json({ created, updated });
   })
 );
 

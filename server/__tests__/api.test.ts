@@ -1126,3 +1126,233 @@ describe("Canvas course link", () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe("Canvas assignment import", () => {
+  it("refuses to list importable assignments before a course is linked", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.get(`/api/classes/${cls.id}/canvas/importable-assignments`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain("Canvas course");
+  });
+
+  it("blocks a non-owner from importing assignments into a class", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id, { canvasCourseId: 52959 });
+    const agent = await loginAs(app, "other", PASSWORD);
+    const { db } = await import("./helpers/fakeStorage");
+
+    const res = await agent
+      .post(`/api/classes/${cls.id}/canvas/import-assignments`)
+      .send({
+        assignments: [
+          {
+            canvasAssignmentId: 900,
+            name: "Reading 1",
+            moduleGroup: "Hypothesis",
+            scoringType: "numeric",
+          },
+        ],
+      });
+
+    expect(res.status).toBe(403);
+    expect(db.assignments).toHaveLength(0);
+  });
+
+  it("rejects an empty selection before reaching Canvas", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id, { canvasCourseId: 52959 });
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent
+      .post(`/api/classes/${cls.id}/canvas/import-assignments`)
+      .send({ assignments: [] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain("at least one");
+  });
+});
+
+describe("Contract import from a summary table", () => {
+  /** A class whose shape matches the table the drafts below describe. */
+  function classWithWork(instructorId: number) {
+    const cls = addClass(instructorId);
+    const logs = [1, 2, 3].map((n) =>
+      addAssignment(cls.id, { name: `Discussion Log ${n}`, moduleGroup: "Discussion Logs" })
+    );
+    const essay = addAssignment(cls.id, {
+      name: "Writing Assignment 1",
+      moduleGroup: "Writing",
+    });
+    return { cls, logs, essay };
+  }
+
+  it("creates one contract per grade with the terms it was given", async () => {
+    const prof = instructor("prof");
+    const { cls, logs, essay } = classWithWork(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const { db } = await import("./helpers/fakeStorage");
+
+    const res = await agent.post(`/api/classes/${cls.id}/contracts/import`).send({
+      contracts: [
+        {
+          grade: "A",
+          assignments: [...logs.map((l) => ({ id: l.id })), { id: essay.id }],
+          maxAbsences: 2,
+          requiredParticipationSessions: 0,
+          categoryRequirements: [{ category: "Discussion Logs", required: 3 }],
+        },
+        {
+          grade: "B",
+          assignments: logs.map((l) => ({ id: l.id })),
+          maxAbsences: 3,
+          requiredParticipationSessions: 0,
+          categoryRequirements: [{ category: "Discussion Logs", required: 2 }],
+        },
+      ],
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.created).toEqual(["A", "B"]);
+
+    const a = db.gradeContracts.find((c) => c.grade === "A")!;
+    expect(a.maxAbsences).toBe(2);
+    expect(a.version).toBe(1);
+    expect(a.categoryRequirements).toEqual([{ category: "Discussion Logs", required: 3 }]);
+    expect(a.assignments.map((x) => x.id).sort()).toEqual(
+      [...logs.map((l) => l.id), essay.id].sort()
+    );
+  });
+
+  it("publishes a new version when the grade already has a contract", async () => {
+    const prof = instructor("prof");
+    const { cls, logs } = classWithWork(prof.id);
+    const existing = addContract(cls.id, { grade: "A", version: 1, maxAbsences: 9 });
+    const sam = student("sam");
+    enroll(cls.id, sam.id, existing.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const { db } = await import("./helpers/fakeStorage");
+
+    const res = await agent.post(`/api/classes/${cls.id}/contracts/import`).send({
+      contracts: [
+        {
+          grade: "A",
+          assignments: logs.map((l) => ({ id: l.id })),
+          maxAbsences: 2,
+          requiredParticipationSessions: 0,
+          categoryRequirements: [],
+        },
+      ],
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.created).toEqual([]);
+    expect(res.body.updated[0].grade).toBe("A");
+
+    // The old terms stay on record, and the student moves to the new version
+    // without having to re-confirm -- the same guarantee an edit gives.
+    const versions = db.gradeContracts.filter((c) => c.grade === "A");
+    expect(versions.map((v) => v.version).sort()).toEqual([1, 2]);
+    const current = versions.find((v) => v.version === 2)!;
+    expect(current.maxAbsences).toBe(2);
+    expect(db.studentContracts[0].contractId).toBe(current.id);
+  });
+
+  it("refuses an assignment from another class", async () => {
+    const prof = instructor("prof");
+    const { cls } = classWithWork(prof.id);
+    const other = addClass(prof.id);
+    const foreign = addAssignment(other.id, { name: "Someone else's essay" });
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const { db } = await import("./helpers/fakeStorage");
+
+    const res = await agent.post(`/api/classes/${cls.id}/contracts/import`).send({
+      contracts: [
+        {
+          grade: "A",
+          assignments: [{ id: foreign.id }],
+          maxAbsences: 0,
+          requiredParticipationSessions: 0,
+          categoryRequirements: [],
+        },
+      ],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain("does not belong to this class");
+    expect(db.gradeContracts).toHaveLength(0);
+  });
+
+  it("refuses a category that is not a module group in this class", async () => {
+    const prof = instructor("prof");
+    const { cls, logs } = classWithWork(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const { db } = await import("./helpers/fakeStorage");
+
+    // A category naming a group that does not exist matches no assignment, so
+    // it would silently require nothing of anybody.
+    const res = await agent.post(`/api/classes/${cls.id}/contracts/import`).send({
+      contracts: [
+        {
+          grade: "A",
+          assignments: logs.map((l) => ({ id: l.id })),
+          maxAbsences: 0,
+          requiredParticipationSessions: 0,
+          categoryRequirements: [{ category: "Perusall", required: 2 }],
+        },
+      ],
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain("Perusall");
+    expect(db.gradeContracts).toHaveLength(0);
+  });
+
+  it("blocks a non-owner from importing contracts", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const { cls, logs } = classWithWork(owner.id);
+    const agent = await loginAs(app, "other", PASSWORD);
+    const { db } = await import("./helpers/fakeStorage");
+
+    const res = await agent.post(`/api/classes/${cls.id}/contracts/import`).send({
+      contracts: [
+        {
+          grade: "A",
+          assignments: logs.map((l) => ({ id: l.id })),
+          maxAbsences: 0,
+          requiredParticipationSessions: 0,
+          categoryRequirements: [],
+        },
+      ],
+    });
+
+    expect(res.status).toBe(403);
+    expect(db.gradeContracts).toHaveLength(0);
+  });
+
+  it("rejects the same grade twice in one import", async () => {
+    const prof = instructor("prof");
+    const { cls, logs } = classWithWork(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const { db } = await import("./helpers/fakeStorage");
+
+    const draft = {
+      grade: "A",
+      assignments: logs.map((l) => ({ id: l.id })),
+      maxAbsences: 0,
+      requiredParticipationSessions: 0,
+      categoryRequirements: [],
+    };
+    const res = await agent
+      .post(`/api/classes/${cls.id}/contracts/import`)
+      .send({ contracts: [draft, { ...draft, maxAbsences: 5 }] });
+
+    expect(res.status).toBe(400);
+    expect(db.gradeContracts).toHaveLength(0);
+  });
+});

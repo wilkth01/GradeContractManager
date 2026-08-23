@@ -3,12 +3,14 @@ import { storage } from "../storage";
 import { encryptSecret, decryptSecret } from "../crypto";
 import { CanvasClient, CanvasError } from "../services/canvas/client";
 import { buildPull } from "../services/canvas/grade-pull";
+import { proposeAssignments } from "../services/canvas/assignment-import";
 import { auditService } from "../audit";
 import {
   canvasTokenSchema,
   linkCanvasCourseSchema,
   importRosterSchema,
   mapCanvasAssignmentsSchema,
+  importCanvasAssignmentsSchema,
 } from "@shared/schema";
 import { requireInstructor, requireClassOwner } from "../middleware";
 import { asyncHandler, BadRequestError, NotFoundError } from "../errors";
@@ -294,6 +296,121 @@ router.get(
       })),
       absenceCanvasAssignmentId: cls.canvasAbsenceAssignmentId,
     });
+  })
+);
+
+/**
+ * What importing each Canvas assignment into this class would create.
+ *
+ * Read-only. Every Canvas assignment is offered, with the group, scoring type
+ * and due date it would arrive with, and a flag for the ones already here --
+ * building a semester by hand is the longest part of setting a class up, and
+ * all of it already exists in Canvas.
+ */
+router.get(
+  "/api/classes/:classId/canvas/importable-assignments",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const cls = req.cls!;
+    if (!cls.canvasCourseId) {
+      throw new BadRequestError("Link this class to a Canvas course first");
+    }
+
+    const client = await canvasClientFor(req.user!.id);
+    const [canvasAssignments, groups, portalAssignments] = await Promise.all([
+      client.courseAssignments(cls.canvasCourseId),
+      client.assignmentGroups(cls.canvasCourseId),
+      storage.getAssignmentsByClass(cls.id),
+    ]);
+
+    res.json({
+      proposals: proposeAssignments({ canvasAssignments, groups, portalAssignments }),
+      // Existing module groups, so an import can be filed alongside what is
+      // already here rather than inventing a parallel set of names.
+      moduleGroups: Array.from(
+        new Set(portalAssignments.map((a) => a.moduleGroup).filter((g): g is string => !!g))
+      ).sort(),
+    });
+  })
+);
+
+/**
+ * Create portal assignments from chosen Canvas assignments.
+ *
+ * Each id is re-checked against the linked course rather than trusted from the
+ * browser, and anything already imported is skipped instead of duplicated --
+ * running this twice must not leave the class with two of everything.
+ */
+router.post(
+  "/api/classes/:classId/canvas/import-assignments",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const cls = req.cls!;
+    if (!cls.canvasCourseId) {
+      throw new BadRequestError("Link this class to a Canvas course first");
+    }
+
+    const parsed = importCanvasAssignmentsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new BadRequestError(
+        parsed.error.issues[0]?.message ?? "Invalid assignment selection"
+      );
+    }
+
+    const client = await canvasClientFor(req.user!.id);
+    const [canvasAssignments, existing] = await Promise.all([
+      client.courseAssignments(cls.canvasCourseId),
+      storage.getAssignmentsByClass(cls.id),
+    ]);
+
+    const inCourse = new Set(canvasAssignments.map((a) => a.id));
+    const alreadyImported = new Set(
+      existing.map((a) => a.canvasAssignmentId).filter((id): id is number => id != null)
+    );
+
+    const created: { id: number; name: string }[] = [];
+    const skipped: { name: string; reason: string }[] = [];
+
+    for (const choice of parsed.data.assignments) {
+      if (!inCourse.has(choice.canvasAssignmentId)) {
+        skipped.push({ name: choice.name, reason: "Not an assignment in the linked Canvas course" });
+        continue;
+      }
+      if (alreadyImported.has(choice.canvasAssignmentId)) {
+        skipped.push({ name: choice.name, reason: "Already imported" });
+        continue;
+      }
+
+      const assignment = await storage.createAssignment({
+        name: choice.name,
+        classId: cls.id,
+        moduleGroup: choice.moduleGroup,
+        scoringType: choice.scoringType,
+        dueDate: choice.dueDate ? new Date(choice.dueDate) : null,
+        canvasAssignmentId: choice.canvasAssignmentId,
+      });
+      // Guards against the same id appearing twice in one request.
+      alreadyImported.add(choice.canvasAssignmentId);
+
+      await auditService.logWithRequest(req, {
+        action: "CREATE",
+        entityType: "assignment",
+        entityId: assignment.id,
+        oldValues: null,
+        newValues: {
+          name: assignment.name,
+          classId: cls.id,
+          moduleGroup: assignment.moduleGroup,
+          scoringType: assignment.scoringType,
+          canvasAssignmentId: assignment.canvasAssignmentId,
+          source: "canvas",
+        },
+      });
+
+      created.push({ id: assignment.id, name: assignment.name });
+    }
+
+    res.status(201).json({ created, skipped });
   })
 );
 

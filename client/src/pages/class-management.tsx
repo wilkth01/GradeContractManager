@@ -65,6 +65,8 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { EditAssignmentDialog } from "@/components/dialogs/edit-assignment-dialog";
 import { ReorderAssignmentsDialog } from "@/components/dialogs/reorder-assignments-dialog";
+import { ImportCanvasAssignmentsDialog } from "@/components/dialogs/import-canvas-assignments-dialog";
+import { ImportContractTableDialog } from "@/components/dialogs/import-contract-table-dialog";
 
 // Edit Class Settings Dialog Component
 function EditClassSettingsDialog({ classData }: { classData: Class }) {
@@ -596,10 +598,16 @@ export default function ClassManagement() {
                   </CardDescription>
                 </div>
                 {assignments && assignments.length > 0 ? (
-                  <CreateGradeContractDialog
-                    classId={parsedClassId}
-                    assignments={assignments}
-                  />
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <ImportContractTableDialog
+                      classId={parsedClassId}
+                      assignments={assignments}
+                    />
+                    <CreateGradeContractDialog
+                      classId={parsedClassId}
+                      assignments={assignments}
+                    />
+                  </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">
                     Add assignments before creating grade contracts
@@ -687,10 +695,11 @@ export default function ClassManagement() {
                     Create and manage assignments for your class
                   </CardDescription>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 justify-end">
                   {assignments && assignments.length > 1 && (
                     <ReorderAssignmentsDialog classId={parsedClassId} assignments={assignments} />
                   )}
+                  <ImportCanvasAssignmentsDialog classId={parsedClassId} />
                   <CreateAssignmentDialog classId={parsedClassId} />
                 </div>
               </CardHeader>

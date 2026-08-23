@@ -44,6 +44,10 @@ export interface CanvasAssignment {
   assignment_group_id: number;
   published: boolean;
   omit_from_final_grade?: boolean;
+  /** ISO date, or null for an assignment with no due date set. */
+  due_at?: string | null;
+  /** points | pass_fail | percent | letter_grade | gpa_scale | not_graded */
+  grading_type?: string;
 }
 
 export interface CanvasAssignmentGroup {

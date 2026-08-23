@@ -334,6 +334,40 @@ export const mapCanvasAssignmentsSchema = z.object({
   ),
 });
 
+// Assignments to create in the app from their Canvas counterparts. The Canvas
+// id is carried through so the grade pull works immediately, without a second
+// mapping step.
+export const importCanvasAssignmentsSchema = z.object({
+  assignments: z
+    .array(
+      z.object({
+        canvasAssignmentId: z.number().int().positive(),
+        name: z.string().min(1),
+        moduleGroup: z.string().nullable(),
+        scoringType: z.enum(["status", "numeric"]),
+        dueDate: z.string().nullable().optional(),
+      })
+    )
+    .min(1, "Choose at least one assignment"),
+});
+
+// Contracts built from a pasted summary table. The client resolves each row to
+// a module group or an assignment first; this is the resolved result, and the
+// server re-checks every id against the class before writing anything.
+export const importContractsSchema = z.object({
+  contracts: z
+    .array(
+      z.object({
+        grade: z.enum(["A", "B", "C"]),
+        assignments: z.array(assignmentRequirementSchema),
+        maxAbsences: z.number().min(0).default(0),
+        requiredParticipationSessions: z.number().min(0).default(0),
+        categoryRequirements: z.array(categoryRequirementSchema).default([]),
+      })
+    )
+    .min(1, "Nothing to import"),
+});
+
 export const sendMessagesSchema = z.object({
   studentIds: z.array(z.number().int()).min(1),
   intro: z.string().max(2000).optional(),
