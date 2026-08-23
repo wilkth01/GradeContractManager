@@ -32,6 +32,8 @@ type Tables = {
   sessions: ClassSession[];
   participation: SessionParticipation[];
   absences: StudentAbsences[];
+  /** When true, storage.ping() rejects, simulating an unreachable database. */
+  pingFails: boolean;
 };
 
 export const db: Tables = {
@@ -44,6 +46,7 @@ export const db: Tables = {
   sessions: [],
   participation: [],
   absences: [],
+  pingFails: false,
 };
 
 let nextId = 1;
@@ -59,6 +62,7 @@ export function resetDb() {
   db.sessions = [];
   db.participation = [];
   db.absences = [];
+  db.pingFails = false;
   nextId = 1;
 }
 
@@ -152,6 +156,13 @@ export function enroll(classId: number, studentId: number, contractId: number | 
 
 const classStorage = {
   sessionStore: new MemoryStore({ checkPeriod: 86400000 }) as session.Store,
+
+  // Health checks call this. Setting db.pingFails lets a test drive the
+  // unreachable-database branch, which is the branch that actually matters:
+  // Render rolls a release back on it.
+  async ping() {
+    if (db.pingFails) throw new Error("connection terminated unexpectedly");
+  },
 
   async getUser(userId: number) {
     return db.users.find((u) => u.id === userId);

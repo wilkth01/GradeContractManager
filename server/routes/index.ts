@@ -11,6 +11,7 @@ import accountRecoveryRouter from "./account-recovery";
 import auditRouter from "./audit";
 import canvasRouter from "./canvas";
 import messagesRouter from "./messages";
+import healthRouter from "./health";
 
 /**
  * Route registration for the Contract Grade Tracker API.
@@ -35,4 +36,5 @@ export function registerRouteModules(app: Express): void {
   app.use(auditRouter);
   app.use(canvasRouter);
   app.use(messagesRouter);
+  app.use(healthRouter);
 }

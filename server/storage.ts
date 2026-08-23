@@ -10,6 +10,8 @@ import crypto from "crypto";
 const PostgresSessionStore = connectPg(session);
 
 export interface IStorage {
+  /** Round-trips a trivial query so the health check can prove the database is reachable. */
+  ping(): Promise<void>;
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
@@ -96,6 +98,10 @@ export interface IStorage {
 
 export class DatabaseStorage implements IStorage {
   sessionStore: session.Store;
+
+  async ping(): Promise<void> {
+    await db.execute(sql`select 1`);
+  }
 
   constructor() {
     this.sessionStore = new PostgresSessionStore({

@@ -587,6 +587,35 @@ describe("Error handling", () => {
   });
 });
 
+describe("Health check", () => {
+  // Render gates the deploy on this endpoint and rolls a release back when it
+  // fails. An unconditional OK would promote a release that cannot reach the
+  // database and then decline to roll it back, so the unreachable branch is
+  // the one worth pinning down.
+  it("reports OK when the database answers", async () => {
+    const res = await request(app).get("/api/health");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: "OK", database: "OK" });
+  });
+
+  it("answers 503 when the database is unreachable", async () => {
+    const { db } = await import("./helpers/fakeStorage");
+    db.pingFails = true;
+    try {
+      const res = await request(app).get("/api/health");
+      expect(res.status).toBe(503);
+      expect(res.body.database).toBe("unreachable");
+    } finally {
+      db.pingFails = false;
+    }
+  });
+
+  it("needs no authentication", async () => {
+    const res = await request(app).get("/api/health");
+    expect(res.status).not.toBe(401);
+  });
+});
+
 describe("Class sessions and participation", () => {
   it("creates a session as the class owner", async () => {
     const prof = instructor("prof");

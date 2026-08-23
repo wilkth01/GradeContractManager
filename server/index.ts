@@ -74,11 +74,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health check endpoint
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "OK" });
-});
-
 (async () => {
   // Set up authentication (must be before any routes that use requireAuth)
   setupAuth(app);
