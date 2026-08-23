@@ -247,7 +247,10 @@ export function ImportCanvasAssignmentsDialog({ classId }: Props) {
               )}
             </div>
 
-            <ScrollArea className="flex-1 pr-3 -mr-3">
+            {/* min-h-0 is load-bearing: a flex item defaults to min-height:auto,
+                which refuses to shrink below its content, so the area would grow
+                past the dialog and clip the rows instead of scrolling them. */}
+            <ScrollArea className="flex-1 min-h-0 pr-3 -mr-3">
               {importable.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">
                   Every published Canvas assignment is already in this class.
