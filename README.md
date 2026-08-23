@@ -176,6 +176,23 @@ check that `shared/schema.ts` has no changes without a matching migration.
 
 ## Deployment
 
-Render, configured by `render.yaml`. `SESSION_SECRET` and `TOKEN_ENCRYPTION_KEY` are generated
-there; `DATABASE_URL` is set by hand. Migrations are not run automatically — apply them
-deliberately, and remember the deployed code and the database schema have to move together.
+Render — service `GradeContractManager`, deploying `main` on every commit, served at
+`gradecontract.tomwilk.net`.
+
+`render.yaml` describes that service accurately, but the service was created through the
+dashboard rather than from this file, so **editing `render.yaml` changes nothing by itself**.
+These have to be set in the dashboard:
+
+| Setting | Value | Why |
+|---|---|---|
+| Build Command | `npm install --include=dev && npm run build` | `NODE_ENV=production` makes npm skip devDependencies, and `vite`, `esbuild`, `typescript` and `drizzle-kit` all live there. Without `--include=dev` the build fails. |
+| Pre-Deploy Command | `npm run db:migrate` | Applies migrations before the new code starts. Without it the schema and the code drift apart mid-deploy. A failed migration cancels the deploy instead of releasing code that would crash. |
+| Health Check Path | `/api/health` | Lets Render tell a broken release from a working one, so a bad deploy rolls back rather than silently serving errors. |
+
+Environment variables to confirm are present: `DATABASE_URL`, `SESSION_SECRET`,
+`TOKEN_ENCRYPTION_KEY`, `CANVAS_BASE_URL`.
+
+**The code and the database schema have to move together.** The new app cannot read the old
+schema, and the old app cannot read the new one. With the pre-deploy command set, Render
+handles this: migrate, then release. Without it, a deploy that adds a migration leaves a
+window where the running code and the live schema disagree.

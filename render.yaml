@@ -1,12 +1,33 @@
+# Matches the live GradeContractManager service (srv-d5lvnjcoud1c7391mbog).
+#
+# That service was created through the dashboard, not from this file, so editing
+# it here changes nothing on its own -- see "Render configuration" in the README
+# for the settings that have to be entered by hand. This file is kept accurate
+# so it can be applied as a Blueprint later, or used to recreate the service.
 services:
   - type: web
-    name: contract-grade-tracker
+    name: GradeContractManager
     runtime: node
-    region: ohio
-    plan: free
-    buildCommand: npm install && npm run build
+    region: virginia
+    plan: starter
+
+    # --include=dev is required, not optional. NODE_ENV=production below makes
+    # npm skip devDependencies, and vite, esbuild, typescript and drizzle-kit
+    # all live there -- a plain `npm install` produces a build that cannot run.
+    buildCommand: npm install --include=dev && npm run build
+
+    # Migrations run before the new code starts. Without this the schema and the
+    # code can drift apart during a deploy: the new app cannot read the old
+    # schema, and the old app cannot read the new one. A failed migration
+    # cancels the deploy rather than releasing code that would crash.
+    preDeployCommand: npm run db:migrate
+
     startCommand: npm run start
+
+    # Lets Render tell a broken release from a working one, so a bad deploy
+    # rolls back instead of silently serving errors.
     healthCheckPath: /api/health
+
     envVars:
       - key: NODE_ENV
         value: production
@@ -14,8 +35,9 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
-      # Encrypts stored Canvas tokens. Rotating it invalidates them,
-      # and instructors reconnect Canvas.
+      # Encrypts stored Canvas tokens. If unset the app falls back to
+      # SESSION_SECRET, which ties two unrelated secrets together: rotating the
+      # session secret would then silently invalidate every stored Canvas token.
       - key: TOKEN_ENCRYPTION_KEY
         generateValue: true
       - key: CANVAS_BASE_URL
