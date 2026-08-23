@@ -219,9 +219,13 @@ export function SendContractUpdatesDialog({ classId }: Props) {
                         {preview.data.unlinked.length === 1 ? "" : "s"} cannot be messaged
                       </AlertTitle>
                       <AlertDescription>
-                        No Canvas account is linked for{" "}
-                        {preview.data.unlinked.map((u) => u.fullName).join(", ")}. Sync the
-                        roster from Canvas to link them.
+                        No Canvas account is linked for these students. Sync the roster from
+                        Canvas to link them.
+                        <ul className="list-disc list-inside mt-1">
+                          {preview.data.unlinked.map((u) => (
+                            <li key={u.studentId}>{u.fullName}</li>
+                          ))}
+                        </ul>
                       </AlertDescription>
                     </Alert>
                   )}

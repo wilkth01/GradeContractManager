@@ -41,6 +41,7 @@ export interface IStorage {
   setStudentContract(contract: Omit<StudentContract, "id">): Promise<StudentContract>;
   getStudentContract(studentId: number, classId: number): Promise<StudentContract | undefined>;
   getStudentContractsByClass(classId: number): Promise<StudentContract[]>;
+  getEnrollmentCounts(classIds: number[]): Promise<Map<number, number>>;
 
   updateProgress(progress: Omit<AssignmentProgress, "id">): Promise<AssignmentProgress>;
   getStudentProgress(studentId: number, classId: number): Promise<AssignmentProgress[]>;
@@ -355,6 +356,25 @@ export class DatabaseStorage implements IStorage {
         )
       );
     return contract;
+  }
+
+  /**
+   * Enrolled student count per class, in one query rather than one per class.
+   */
+  async getEnrollmentCounts(classIds: number[]): Promise<Map<number, number>> {
+    if (classIds.length === 0) return new Map();
+
+    const rows = await db
+      .select({
+        classId: studentContracts.classId,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(studentContracts)
+      .innerJoin(users, eq(users.id, studentContracts.studentId))
+      .where(and(inArray(studentContracts.classId, classIds), eq(users.role, "student")))
+      .groupBy(studentContracts.classId);
+
+    return new Map(rows.map((row) => [row.classId, row.count]));
   }
 
   async getStudentContractsByClass(classId: number): Promise<StudentContract[]> {

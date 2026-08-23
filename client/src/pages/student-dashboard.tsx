@@ -19,7 +19,7 @@ export default function StudentDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
-  const { data: classes, isLoading } = useQuery<Class[]>({
+  const { data: classes, isLoading } = useQuery<(Class & { hasContract?: boolean })[]>({
     queryKey: ["/api/classes"],
   });
 
@@ -96,7 +96,9 @@ export default function StudentDashboard() {
                   <Target className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">--</p>
+                  <p className="text-2xl font-bold">
+                    {(classes ?? []).filter((cls) => cls.hasContract).length}
+                  </p>
                   <p className="text-white/80 text-sm">Contracts Set</p>
                 </div>
               </div>

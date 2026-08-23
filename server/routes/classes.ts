@@ -37,12 +37,27 @@ router.get(
   "/api/classes",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const classes =
-      req.user!.role === "instructor"
-        ? await storage.getClassesByInstructor(req.user!.id)
-        : await storage.getClassesByStudent(req.user!.id);
+    if (req.user!.role === "instructor") {
+      const classes = await storage.getClassesByInstructor(req.user!.id);
+      // The dashboard shows a roster total; without this it had a placeholder.
+      const counts = await storage.getEnrollmentCounts(classes.map((c) => c.id));
+      return res.json(
+        classes.map((cls) => ({ ...cls, studentCount: counts.get(cls.id) ?? 0 }))
+      );
+    }
 
-    res.json(classes);
+    const classes = await storage.getClassesByStudent(req.user!.id);
+    const enrollments = await Promise.all(
+      classes.map((cls) => storage.getStudentContract(req.user!.id, cls.id))
+    );
+
+    res.json(
+      classes.map((cls, i) => ({
+        ...cls,
+        hasContract: enrollments[i]?.contractId != null,
+        contractConfirmed: enrollments[i]?.isConfirmed ?? false,
+      }))
+    );
   })
 );
 

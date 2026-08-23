@@ -63,7 +63,7 @@ export default function InstructorDashboard() {
   const [classToDelete, setClassToDelete] = useState<Class | null>(null);
   const [inactiveOpen, setInactiveOpen] = useState(false);
 
-  const { data: classes, isLoading } = useQuery<Class[]>({
+  const { data: classes, isLoading } = useQuery<(Class & { studentCount?: number })[]>({
     queryKey: ["/api/classes"],
   });
 
@@ -366,7 +366,9 @@ export default function InstructorDashboard() {
                   <Users className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">--</p>
+                  <p className="text-2xl font-bold">
+                    {activeClasses.reduce((sum, cls) => sum + (cls.studentCount ?? 0), 0)}
+                  </p>
                   <p className="text-white/80 text-sm">Total Students</p>
                 </div>
               </div>

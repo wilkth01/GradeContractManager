@@ -275,7 +275,7 @@ export function CanvasSettingsDialog({ classId }: Props) {
             <p className="text-sm text-muted-foreground">
               Brings the Canvas roster in: students already here are linked to their Canvas
               account, and anyone missing gets an account created from their Canvas details.
-              Matching is on Canvas id and username only \u2014 never names, since a wrong match
+              Matching is on Canvas id and username only, never names, since a wrong match
               would enroll one student under another's record.
             </p>
             <div className="flex flex-wrap gap-2">
@@ -330,8 +330,12 @@ export function CanvasSettingsDialog({ classId }: Props) {
                 </AlertTitle>
                 {syncResult.unmatched.length > 0 && (
                   <AlertDescription>
-                    No Canvas account found for{" "}
-                    {syncResult.unmatched.map((s) => s.fullName).join(", ")}.
+                    No Canvas account found for these students:
+                    <ul className="list-disc list-inside mt-1">
+                      {syncResult.unmatched.map((s) => (
+                        <li key={s.fullName}>{s.fullName}</li>
+                      ))}
+                    </ul>
                   </AlertDescription>
                 )}
               </Alert>
