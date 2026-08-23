@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run redundant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+
+    env:
+      # The suite never reaches a real database or Canvas: storage is faked and
+      # network calls are stubbed. These exist only because modules read them at
+      # import time, and are deliberately not real credentials.
+      SESSION_SECRET: ci-session-secret-not-a-real-secret
+      TOKEN_ENCRYPTION_KEY: ci-token-key-not-a-real-secret
+      DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # ci, not install: fails loudly if package-lock.json has drifted from
+      # package.json rather than quietly resolving something different.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
+
+      # Catches what typechecking cannot: a bundler resolution error, or an
+      # import that only fails when the app is actually assembled.
+      - name: Build
+        run: npm run build
+
+      # The schema and the migrations must agree. If someone edits
+      # shared/schema.ts without generating a migration, this is where it
+      # surfaces -- rather than as a runtime error against a live database.
+      - name: Check migrations match the schema
+        run: |
+          npx drizzle-kit generate --name=ci-drift-check < /dev/null
+          if git diff --quiet --exit-code migrations/; then
+            echo "Schema and migrations agree."
+          else
+            echo "::error::shared/schema.ts has changes with no migration. Run 'npm run db:generate' and commit the result."
+            git --no-pager diff --stat migrations/
+            exit 1
+          fi

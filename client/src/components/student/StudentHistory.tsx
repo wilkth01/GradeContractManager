@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { getAssignmentStatusLabel, getParticipationLabel } from "@shared/constants";
 import { format } from "date-fns";
 import {
   Card,
@@ -38,8 +39,8 @@ const actionLabels: Record<string, string> = {
 const entityLabels: Record<string, string> = {
   assignment_progress: "Grade",
   student_contract: "Contract",
-  attendance: "Attendance",
-  engagement_intention: "Engagement",
+  participation: "Participation",
+  absences: "Absences",
 };
 
 const actionColors: Record<string, string> = {
@@ -61,11 +62,9 @@ function formatChange(
     const oldGrade = oldValues?.numericGrade as string | undefined;
     const newGrade = newValues?.numericGrade as string | undefined;
 
-    const statusLabels = ["Not Submitted", "Not Submitted", "Work-in-Progress", "Successfully Completed"];
-
     if (newStatus !== undefined && oldStatus !== newStatus) {
-      const oldLabel = statusLabels[oldStatus ?? 0] || "Unknown";
-      const newLabel = statusLabels[newStatus] || "Unknown";
+      const oldLabel = getAssignmentStatusLabel(oldStatus);
+      const newLabel = getAssignmentStatusLabel(newStatus);
       return `Status: ${oldLabel} → ${newLabel}`;
     }
 
@@ -84,9 +83,16 @@ function formatChange(
     }
   }
 
-  if (entityType === "attendance") {
-    const isPresent = newValues?.isPresent as boolean | undefined;
-    return isPresent ? "Marked present" : "Marked absent";
+  if (entityType === "participation") {
+    const participation = newValues?.participation as number | null | undefined;
+    return participation != null
+      ? `Participation: ${getParticipationLabel(participation)}`
+      : "Participation updated";
+  }
+
+  if (entityType === "absences") {
+    const absences = newValues?.absences;
+    return absences != null ? `Absences: ${absences}` : "Absences updated";
   }
 
   return "Record updated";

@@ -35,7 +35,6 @@ export function ForgotPasswordDialog({
 }: ForgotPasswordDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [resetToken, setResetToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
@@ -51,12 +50,10 @@ export function ForgotPasswordDialog({
     setError(null);
 
     try {
-      const response = await apiRequest("POST", "/api/auth/forgot-password", data);
-      const result = await response.json();
-      
+      await apiRequest("POST", "/api/auth/forgot-password", data);
+
       setSuccess(true);
-      setResetToken(result.resetToken);
-      
+
       toast({
         title: "Password Reset Requested",
         description: "Your instructor has been notified and will provide you with a reset link.",
@@ -70,21 +67,9 @@ export function ForgotPasswordDialog({
 
   const handleClose = () => {
     setSuccess(false);
-    setResetToken(null);
     setError(null);
     form.reset();
     onOpenChange(false);
-  };
-
-  const copyResetLink = () => {
-    if (resetToken) {
-      const resetUrl = `${window.location.origin}/reset-password?token=${resetToken}`;
-      navigator.clipboard.writeText(resetUrl);
-      toast({
-        title: "Reset Link Copied",
-        description: "The password reset link has been copied to your clipboard.",
-      });
-    }
   };
 
   return (
@@ -103,28 +88,13 @@ export function ForgotPasswordDialog({
               <CheckCircle className="h-5 w-5 text-green-600" />
               <div className="text-sm">
                 <p className="font-medium text-green-800">Password reset requested</p>
-                <p className="text-green-700">Your instructor will provide you with a reset link.</p>
+                <p className="text-green-700">
+                  Your instructor can now generate a reset link for you. Contact them
+                  to receive it.
+                </p>
               </div>
             </div>
 
-            {resetToken && (
-              <Alert>
-                <AlertTriangle className="h-4 w-4" />
-                <AlertDescription>
-                  <strong>Development Mode:</strong> In production, this link would be sent to your instructor.
-                  <div className="mt-2">
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      onClick={copyResetLink}
-                      className="text-xs"
-                    >
-                      Copy Reset Link
-                    </Button>
-                  </div>
-                </AlertDescription>
-              </Alert>
-            )}
           </div>
         ) : (
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">

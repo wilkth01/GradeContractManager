@@ -1,136 +1,122 @@
 import { Router } from "express";
+import { z } from "zod";
 import { storage } from "../storage";
 import { insertAssignmentSchema } from "@shared/schema";
-import { requireAuth, requireInstructor } from "../middleware";
+import { requireClassOwner, requireClassMember } from "../middleware";
+import { asyncHandler, BadRequestError, NotFoundError } from "../errors";
 
 const router = Router();
 
-// Create a new assignment
-router.post("/api/classes/:classId/assignments", requireInstructor, async (req, res) => {
-  const classId = parseInt(req.params.classId);
-  if (isNaN(classId)) {
-    return res.status(400).json({ message: "Invalid class ID" });
-  }
+// Create an assignment
+router.post(
+  "/api/classes/:classId/assignments",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const parsed = insertAssignmentSchema.safeParse({
+      ...req.body,
+      classId: req.cls!.id,
+      moduleGroup: req.body.moduleGroup || null,
+    });
+    if (!parsed.success) {
+      throw new BadRequestError("Invalid assignment data");
+    }
 
-  // Verify instructor owns this class
-  const cls = await storage.getClass(classId);
-  if (!cls || cls.instructorId !== req.user!.id) {
-    return res.sendStatus(403);
-  }
+    const assignment = await storage.createAssignment({
+      ...parsed.data,
+      dueDate: parsed.data.dueDate ? new Date(parsed.data.dueDate) : null,
+      canvasAssignmentId: null,
+    });
+    res.status(201).json(assignment);
+  })
+);
 
-  const parsedData = {
-    ...req.body,
-    classId,
-    moduleGroup: req.body.moduleGroup || null,
-    attemptLimit: req.body.attemptLimit ? parseInt(req.body.attemptLimit) : null,
-  };
-
-  const parsed = insertAssignmentSchema.safeParse(parsedData);
-  if (!parsed.success) {
-    return res.status(400).json(parsed.error);
-  }
-
-  // Convert dueDate string to Date object if provided
-  const assignmentData = {
-    ...parsed.data,
-    dueDate: parsed.data.dueDate ? new Date(parsed.data.dueDate) : null,
-  };
-
-  const assignment = await storage.createAssignment(assignmentData);
-  res.status(201).json(assignment);
-});
-
-// Get all assignments for a class
-router.get("/api/classes/:classId/assignments", requireAuth, async (req, res) => {
-  const classId = parseInt(req.params.classId);
-  if (isNaN(classId)) {
-    return res.status(400).json({ message: "Invalid class ID" });
-  }
-
-  try {
-    const assignments = await storage.getAssignmentsByClass(classId);
+// List assignments. Enrolled students need this to see their contract work.
+router.get(
+  "/api/classes/:classId/assignments",
+  requireClassMember(),
+  asyncHandler(async (req, res) => {
+    const assignments = await storage.getAssignmentsByClass(req.cls!.id);
     res.json(assignments);
-  } catch (error) {
-    console.error("Error fetching assignments:", error);
-    res.status(500).json({ message: "Failed to fetch assignments" });
+  })
+);
+
+// Reorder assignments. Declared before the :assignmentId routes for clarity.
+router.put(
+  "/api/classes/:classId/assignments/reorder",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const parsed = z.array(z.number().int()).min(1).safeParse(req.body.assignmentIds);
+    if (!parsed.success) {
+      throw new BadRequestError("assignmentIds must be a non-empty array of numbers");
+    }
+
+    // reorderAssignments already scopes each update to the class, so ids from
+    // another class are simply no-ops rather than cross-class writes.
+    await storage.reorderAssignments(req.cls!.id, parsed.data);
+    res.sendStatus(200);
+  })
+);
+
+/**
+ * Confirm an assignment belongs to the authorized class.
+ *
+ * Without this, owning any one class was enough to edit or delete an
+ * assignment anywhere, since only the classId in the URL was ever checked.
+ */
+async function assignmentInClass(classId: number, assignmentId: number) {
+  if (isNaN(assignmentId)) {
+    throw new BadRequestError("Invalid assignment ID");
   }
+  const assignments = await storage.getAssignmentsByClass(classId);
+  const assignment = assignments.find((a) => a.id === assignmentId);
+  if (!assignment) {
+    throw new NotFoundError("Assignment not found in this class");
+  }
+  return assignment;
+}
+
+// Fields an instructor may change. classId and displayOrder are deliberately
+// absent so an update cannot move an assignment into another class.
+const updateAssignmentSchema = z.object({
+  name: z.string().min(1).optional(),
+  moduleGroup: z.string().nullable().optional(),
+  scoringType: z.enum(["status", "numeric"]).optional(),
+  dueDate: z.string().nullable().optional(),
 });
 
 // Update an assignment
-router.patch("/api/classes/:classId/assignments/:assignmentId", requireInstructor, async (req, res) => {
-  const classId = parseInt(req.params.classId);
-  const assignmentId = parseInt(req.params.assignmentId);
+router.patch(
+  "/api/classes/:classId/assignments/:assignmentId",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const assignmentId = parseInt(req.params.assignmentId);
+    await assignmentInClass(req.cls!.id, assignmentId);
 
-  if (isNaN(classId) || isNaN(assignmentId)) {
-    return res.status(400).json({ message: "Invalid ID" });
-  }
+    const parsed = updateAssignmentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new BadRequestError("Invalid assignment data");
+    }
 
-  // Verify instructor owns this class
-  const cls = await storage.getClass(classId);
-  if (!cls || cls.instructorId !== req.user!.id) {
-    return res.sendStatus(403);
-  }
-
-  try {
-    const assignment = await storage.updateAssignment(assignmentId, req.body);
+    const { dueDate, ...rest } = parsed.data;
+    const assignment = await storage.updateAssignment(assignmentId, {
+      ...rest,
+      ...(dueDate !== undefined ? { dueDate: dueDate ? new Date(dueDate) : null } : {}),
+    });
     res.json(assignment);
-  } catch (error) {
-    console.error("Error updating assignment:", error);
-    res.status(500).json({ message: "Failed to update assignment" });
-  }
-});
+  })
+);
 
 // Delete an assignment
-router.delete("/api/classes/:classId/assignments/:assignmentId", requireInstructor, async (req, res) => {
-  const classId = parseInt(req.params.classId);
-  const assignmentId = parseInt(req.params.assignmentId);
+router.delete(
+  "/api/classes/:classId/assignments/:assignmentId",
+  requireClassOwner(),
+  asyncHandler(async (req, res) => {
+    const assignmentId = parseInt(req.params.assignmentId);
+    await assignmentInClass(req.cls!.id, assignmentId);
 
-  if (isNaN(classId) || isNaN(assignmentId)) {
-    return res.status(400).json({ message: "Invalid ID" });
-  }
-
-  // Verify instructor owns this class
-  const cls = await storage.getClass(classId);
-  if (!cls || cls.instructorId !== req.user!.id) {
-    return res.sendStatus(403);
-  }
-
-  try {
     await storage.deleteAssignment(assignmentId);
     res.sendStatus(200);
-  } catch (error) {
-    console.error("Error deleting assignment:", error);
-    res.status(500).json({ message: "Failed to delete assignment" });
-  }
-});
-
-// Reorder assignments
-router.put("/api/classes/:classId/assignments/reorder", requireInstructor, async (req, res) => {
-  const classId = parseInt(req.params.classId);
-
-  if (isNaN(classId)) {
-    return res.status(400).json({ message: "Invalid class ID" });
-  }
-
-  // Verify instructor owns this class
-  const cls = await storage.getClass(classId);
-  if (!cls || cls.instructorId !== req.user!.id) {
-    return res.sendStatus(403);
-  }
-
-  const { assignmentIds } = req.body;
-
-  if (!Array.isArray(assignmentIds) || assignmentIds.length === 0) {
-    return res.status(400).json({ message: "Invalid assignment IDs" });
-  }
-
-  try {
-    await storage.reorderAssignments(classId, assignmentIds);
-    res.sendStatus(200);
-  } catch (error) {
-    console.error("Error reordering assignments:", error);
-    res.status(500).json({ message: "Failed to reorder assignments" });
-  }
-});
+  })
+);
 
 export default router;

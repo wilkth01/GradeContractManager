@@ -2,10 +2,15 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import {
+  MAX_NUMERIC_GRADE,
+  DEFAULT_PARTICIPATION_BAR,
+  getParticipationLabel,
+} from "@shared/constants";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Assignment, GradeContract } from "@shared/schema";
+import { Assignment, GradeContract, CategoryRequirement } from "@shared/schema";
 import {
   Dialog,
   DialogContent,
@@ -43,27 +48,26 @@ const editGradeContractSchema = z.object({
     comments: z.string().optional(),
     minPoints: z.number().min(0).optional(),
   })),
-  requiredEngagementIntentions: z.number().default(0),
+  requiredParticipationSessions: z.number().default(0),
   maxAbsences: z.number().default(0),
   assignmentComments: z.record(z.string(), z.string()).default({}),
   categoryRequirements: z.array(z.object({
     category: z.string(),
-    required: z.number().min(1),
-    minAverage: z.number().min(0).max(4).optional(),
+    required: z.number().min(0).optional(),
+    minAverage: z.number().min(0).max(MAX_NUMERIC_GRADE).optional(),
   })).optional(),
 });
 
 type FormData = z.infer<typeof editGradeContractSchema>;
-type CategoryRequirement = { category: string; required: number; minAverage?: number };
 type AssignmentMinPoints = Record<number, number | undefined>;
 
 // Type for the API payload (doesn't include assignmentComments which is only for form state)
 type ContractUpdatePayload = {
   grade: "A" | "B" | "C";
-  requiredEngagementIntentions: number;
+  requiredParticipationSessions: number;
   maxAbsences: number;
   assignments: { id: number; comments?: string; minPoints?: number }[];
-  categoryRequirements?: { category: string; required: number; minAverage?: number }[];
+  categoryRequirements?: CategoryRequirement[];
   version: number;
 };
 
@@ -73,7 +77,7 @@ export function EditGradeContractDialog({
   assignments
 }: {
   classId: number;
-  contract: GradeContract & { categoryRequirements?: (CategoryRequirement | { category: string; required: number })[] | null };
+  contract: GradeContract & { categoryRequirements?: CategoryRequirement[] | null };
   assignments: Assignment[];
 }) {
   const [open, setOpen] = useState(false);
@@ -94,7 +98,7 @@ export function EditGradeContractDialog({
   // Build initial category requirements from existing contract
   const initialCategoryReqs: Record<string, number | null> = {};
   (contract.categoryRequirements || []).forEach(cr => {
-    initialCategoryReqs[cr.category] = cr.required;
+    initialCategoryReqs[cr.category] = cr.required ?? null;
   });
   const [categoryRequirements, setCategoryRequirements] = useState<Record<string, number | null>>(initialCategoryReqs);
 
@@ -140,7 +144,7 @@ export function EditGradeContractDialog({
     defaultValues: {
       grade: contract.grade,
       assignments: contract.assignments,
-      requiredEngagementIntentions: contract.requiredEngagementIntentions || 0,
+      requiredParticipationSessions: contract.requiredParticipationSessions || 0,
       maxAbsences: contract.maxAbsences || 0,
       assignmentComments: initialComments,
       categoryRequirements: contract.categoryRequirements || [],
@@ -156,13 +160,17 @@ export function EditGradeContractDialog({
       );
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (result: { movedStudents?: number }) => {
       queryClient.invalidateQueries({
         queryKey: [`/api/classes/${classId}/contracts`],
       });
+      const moved = result?.movedStudents ?? 0;
       toast({
-        title: "Success",
-        description: "Grade contract updated successfully",
+        title: "Contract updated",
+        description:
+          moved > 0
+            ? `The new terms now apply to ${moved} student${moved === 1 ? "" : "s"} on this contract.`
+            : "No students are on this contract yet.",
       });
       setOpen(false);
       form.reset();
@@ -198,19 +206,19 @@ export function EditGradeContractDialog({
 
     // Build category requirements array from state
     const categoryReqs: CategoryRequirement[] = Object.entries(categoryRequirements)
-      .filter(([_, required]) => required !== null && required > 0)
+      .filter(([category, required]) => (required ?? 0) > 0 || (categoryMinAverages[category] ?? 0) > 0)
       .map(([category, required]) => {
         const minAvg = categoryMinAverages[category];
         return {
           category,
-          required: required as number,
+          ...((required ?? 0) > 0 ? { required: required as number } : {}),
           ...(minAvg != null && minAvg > 0 ? { minAverage: minAvg } : {}),
         };
       });
 
     const formData: ContractUpdatePayload = {
       grade: values.grade,
-      requiredEngagementIntentions: values.requiredEngagementIntentions,
+      requiredParticipationSessions: values.requiredParticipationSessions,
       maxAbsences: values.maxAbsences,
       assignments: assignmentsWithComments,
       categoryRequirements: categoryReqs.length > 0 ? categoryReqs : undefined,
@@ -250,7 +258,9 @@ export function EditGradeContractDialog({
         <DialogHeader>
           <DialogTitle>Edit Grade Contract</DialogTitle>
           <DialogDescription>
-            Update requirements for this grade level
+            Update requirements for this grade level. Saving applies the new terms
+            immediately to everyone who selected this contract, including students who
+            have already confirmed. The previous version is kept on record.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -280,10 +290,10 @@ export function EditGradeContractDialog({
 
             <FormField
               control={form.control}
-              name="requiredEngagementIntentions"
+              name="requiredParticipationSessions"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Required Engagement Intentions</FormLabel>
+                  <FormLabel>Required Participation Sessions</FormLabel>
                   <FormControl>
                     <Input
                       type="number"
@@ -291,11 +301,12 @@ export function EditGradeContractDialog({
                       placeholder="e.g., 8"
                       {...field}
                       onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : 0)}
-                    />
+                  />
                   </FormControl>
                   <FormMessage />
                   <p className="text-sm text-muted-foreground">
-                    Number of engagement intentions students must fulfill for this grade. Set to 0 if not required.
+                    Number of class sessions in which the student must participate at
+                    "{getParticipationLabel(DEFAULT_PARTICIPATION_BAR)}" or above. Set to 0 if not required.
                   </p>
                 </FormItem>
               )}

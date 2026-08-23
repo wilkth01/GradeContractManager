@@ -1,6 +1,17 @@
-import { pgTable, text, serial, integer, boolean, timestamp, json, decimal } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, json, decimal, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { MAX_NUMERIC_GRADE, MAX_PARTICIPATION } from "./constants";
+
+/**
+ * One category (module group) requirement inside a grade contract: complete a
+ * number of them, hold an average across them, or both.
+ */
+export type CategoryRequirement = {
+  category: string;
+  required?: number;
+  minAverage?: number;
+};
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -10,6 +21,12 @@ export const users = pgTable("users", {
   fullName: text("full_name").notNull(),
   email: text("email"),
   isTemporary: boolean("is_temporary").default(false),
+  // Canvas identity, populated by a roster sync. Matching on this is exact,
+  // which demotes name fuzzing to a fallback for unlinked students.
+  canvasUserId: integer("canvas_user_id"),
+  // An instructor's Canvas personal access token, encrypted at rest and never
+  // returned to the client. See server/crypto.ts.
+  canvasTokenEncrypted: text("canvas_token_encrypted"),
 });
 
 export const classes = pgTable("classes", {
@@ -19,6 +36,17 @@ export const classes = pgTable("classes", {
   isArchived: boolean("is_archived").default(false),
   description: text("description"),
   semesterStartDate: text("semester_start_date"),
+  canvasCourseId: integer("canvas_course_id"),
+  // The Canvas assignment Qwickly writes absence totals into, if enabled.
+  canvasAbsenceAssignmentId: integer("canvas_absence_assignment_id"),
+  // Absence penalties that sit above the contract tiers: at or beyond the first
+  // threshold the earned grade drops one letter, at or beyond the second the
+  // course is failed outright, whatever the contract says. Null disables.
+  absencePenaltyThreshold: integer("absence_penalty_threshold"),
+  absenceFailureThreshold: integer("absence_failure_threshold"),
+  // The participation level a session must reach to count toward a contract.
+  // Null falls back to the shared default.
+  participationBar: integer("participation_bar"),
 });
 
 export const assignments = pgTable("assignments", {
@@ -29,6 +57,10 @@ export const assignments = pgTable("assignments", {
   scoringType: text("scoring_type", { enum: ["status", "numeric"] }).notNull(),
   displayOrder: integer("display_order").notNull().default(0),
   dueDate: timestamp("due_date"),
+  // Mapped once, so grades pull without re-matching columns every import.
+  // Per-assignment rather than per-group deliberately: the Canvas assignment
+  // group does not reliably contain every reading of a given kind.
+  canvasAssignmentId: integer("canvas_assignment_id"),
 });
 
 export const gradeContracts = pgTable("grade_contracts", {
@@ -37,9 +69,11 @@ export const gradeContracts = pgTable("grade_contracts", {
   grade: text("grade", { enum: ["A", "B", "C"] }).notNull(),
   version: integer("version").notNull(),
   assignments: json("assignments").notNull().$type<{ id: number; comments?: string; minPoints?: number }[]>(),
-  requiredEngagementIntentions: integer("required_engagement_intentions").default(0),
+  // Number of sessions in which the student must have participated at or above
+  // PARTICIPATION_BAR. Replaces the weekly-intentions count.
+  requiredParticipationSessions: integer("required_participation_sessions").default(0),
   maxAbsences: integer("max_absences").default(0),
-  categoryRequirements: json("category_requirements").$type<{ category: string; required: number; minAverage?: number }[]>(),
+  categoryRequirements: json("category_requirements").$type<CategoryRequirement[]>(),
 });
 
 export const studentContracts = pgTable("student_contracts", {
@@ -62,6 +96,10 @@ export const assignmentProgress = pgTable("assignment_progress", {
 
 export const studentInvitations = pgTable("student_invitations", {
   id: serial("id").primaryKey(),
+  // Set when the account already exists -- a roster imported from Canvas
+  // creates the accounts up front, so setup only has to set a password rather
+  // than let the student invent a second username for themselves.
+  userId: integer("user_id").references(() => users.id),
   email: text("email").notNull(),
   fullName: text("full_name").notNull(),
   classId: integer("class_id").notNull(),
@@ -81,18 +119,6 @@ export const passwordResetRequests = pgTable("password_reset_requests", {
   adminNotified: boolean("admin_notified").default(false),
 });
 
-export const engagementIntentions = pgTable("engagement_intentions", {
-  id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull(),
-  classId: integer("class_id").notNull(),
-  weekNumber: integer("week_number").notNull(),
-  intentionText: text("intention_text").notNull(),
-  isFulfilled: boolean("is_fulfilled").default(false),
-  notes: text("notes"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
@@ -106,6 +132,11 @@ export const insertClassSchema = createInsertSchema(classes).pick({
   semesterStartDate: true,
 }).extend({
   semesterStartDate: z.string().optional(),
+  absencePenaltyThreshold: z.number().int().min(1).nullable().optional(),
+  absenceFailureThreshold: z.number().int().min(1).nullable().optional(),
+  participationBar: z.number().int().min(0).max(MAX_PARTICIPATION).nullable().optional(),
+  canvasCourseId: z.number().int().positive().nullable().optional(),
+  canvasAbsenceAssignmentId: z.number().int().positive().nullable().optional(),
 });
 
 export const updateClassSchema = insertClassSchema.partial();
@@ -127,15 +158,22 @@ const assignmentRequirementSchema = z.object({
   minPoints: z.number().min(0).optional(),
 });
 
-const categoryRequirementSchema = z.object({
-  category: z.string(),
-  required: z.number().min(1),
-  minAverage: z.number().min(0).max(4).optional(),
-});
+// A category requirement can be a count ("complete 6 of these"), an average
+// ("hold a 3.5 across these"), or both. Requiring a count unconditionally made
+// average-only categories impossible to express.
+const categoryRequirementSchema = z
+  .object({
+    category: z.string(),
+    required: z.number().min(0).optional(),
+    minAverage: z.number().min(0).max(MAX_NUMERIC_GRADE).optional(),
+  })
+  .refine((req) => (req.required ?? 0) > 0 || req.minAverage != null, {
+    message: "A category requirement needs either a required count or a minimum average",
+  });
 
 export const insertGradeContractSchema = createInsertSchema(gradeContracts).extend({
   assignments: z.array(assignmentRequirementSchema),
-  requiredEngagementIntentions: z.number().default(0),
+  requiredParticipationSessions: z.number().default(0),
   maxAbsences: z.number().default(0),
   categoryRequirements: z.array(categoryRequirementSchema).optional(),
 });
@@ -148,7 +186,9 @@ export const insertStudentInvitationSchema = createInsertSchema(studentInvitatio
 
 export const setupPasswordSchema = z.object({
   token: z.string(),
-  username: z.string().min(3),
+  // Omitted when the invitation already names an account, which is the case
+  // for students imported from a Canvas roster.
+  username: z.string().min(3).optional(),
   password: z.string().min(6),
 });
 
@@ -161,36 +201,148 @@ export const resetPasswordSchema = z.object({
   password: z.string().min(6, "Password must be at least 6 characters"),
 });
 
-export const insertEngagementIntentionSchema = createInsertSchema(engagementIntentions).pick({
-  studentId: true,
-  classId: true,
-  weekNumber: true,
-  intentionText: true,
-  isFulfilled: true,
-  notes: true,
+// A single class meeting. Attendance and participation are both recorded
+// against one of these, so a roll call is one row per student per session
+// rather than a bare count with fabricated dates.
+export const classSessions = pgTable(
+  "class_sessions",
+  {
+    id: serial("id").primaryKey(),
+    classId: integer("class_id").references(() => classes.id).notNull(),
+    date: timestamp("date").notNull(),
+    topic: text("topic"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    // One session per class per day.
+    classDateUnique: unique("class_sessions_class_date_unique").on(
+      table.classId,
+      table.date
+    ),
+  })
+);
+
+// In-class participation for one student in one session.
+//
+// Attendance itself is not recorded here. Widener requires Qwickly, which owns
+// attendance and computes its own absence total (counting a Partial day as
+// half). That total is imported into student_absences rather than re-derived,
+// so the two systems can never disagree. Qwickly does not track participation,
+// which is why this table exists.
+export const sessionParticipation = pgTable(
+  "session_participation",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: integer("session_id").references(() => classSessions.id).notNull(),
+    studentId: integer("student_id").references(() => users.id).notNull(),
+    // 0-3. Null means the instructor has not assessed this student for this
+    // session, which is different from recording a zero.
+    participation: integer("participation"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    sessionStudentUnique: unique("participation_session_student_unique").on(
+      table.sessionId,
+      table.studentId
+    ),
+  })
+);
+
+// The absence total imported from Qwickly by way of a Canvas gradebook column.
+//
+// Decimal because Qwickly counts a Partial (Late/Left Early) day as half an
+// absence, so real totals look like 7.50.
+export const studentAbsences = pgTable(
+  "student_absences",
+  {
+    id: serial("id").primaryKey(),
+    studentId: integer("student_id").references(() => users.id).notNull(),
+    classId: integer("class_id").references(() => classes.id).notNull(),
+    absences: decimal("absences", { precision: 5, scale: 2 }).notNull(),
+    source: text("source").notNull().default("canvas"),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    studentClassUnique: unique("absences_student_class_unique").on(
+      table.studentId,
+      table.classId
+    ),
+  })
+);
+
+export const insertClassSessionSchema = createInsertSchema(classSessions)
+  .pick({ classId: true, topic: true, notes: true })
+  .extend({
+    date: z.string(),
+    topic: z.string().nullable().optional(),
+    notes: z.string().nullable().optional(),
+  });
+
+export const updateClassSessionSchema = z.object({
+  date: z.string().optional(),
+  topic: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
 });
 
-export const updateEngagementIntentionSchema = z.object({
-  intentionText: z.string().optional(),
-  isFulfilled: z.boolean().optional(),
-  notes: z.string().optional(),
+export const participationEntrySchema = z.object({
+  studentId: z.number().int(),
+  participation: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_PARTICIPATION)
+    .nullable()
+    .optional(),
+  notes: z.string().nullable().optional(),
 });
 
-// Attendance tracking table
-export const attendanceRecords = pgTable("attendance_records", {
-  id: serial("id").primaryKey(),
-  studentId: integer("student_id").references(() => users.id).notNull(),
-  classId: integer("class_id").references(() => classes.id).notNull(),
-  date: timestamp("date").notNull(),
-  isPresent: boolean("is_present").notNull().default(true),
-  notes: text("notes"), // Optional notes for the absence
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export const recordParticipationSchema = z.object({
+  entries: z.array(participationEntrySchema),
 });
 
-export const insertAttendanceRecordSchema = createInsertSchema(attendanceRecords);
-export const updateAttendanceRecordSchema = z.object({
-  isPresent: z.boolean().optional(),
-  notes: z.string().optional(),
+export const canvasTokenSchema = z.object({
+  token: z.string().min(20, "That does not look like a Canvas access token"),
+});
+
+export const importRosterSchema = z.object({
+  /** Create app accounts for Canvas students who do not have one yet. */
+  createMissing: z.boolean().default(true),
+});
+
+// A partial update: omitting a field leaves it alone. Requiring the course id
+// on every call would mean a request that only sets the absence source could
+// unlink the course by forgetting to resend it.
+export const linkCanvasCourseSchema = z
+  .object({
+    canvasCourseId: z.number().int().positive().nullable().optional(),
+    canvasAbsenceAssignmentId: z.number().int().positive().nullable().optional(),
+  })
+  .refine(
+    (data) =>
+      data.canvasCourseId !== undefined || data.canvasAbsenceAssignmentId !== undefined,
+    { message: "Nothing to update" }
+  );
+
+export const mapCanvasAssignmentsSchema = z.object({
+  mappings: z.array(
+    z.object({
+      assignmentId: z.number().int(),
+      canvasAssignmentId: z.number().int().positive().nullable(),
+    })
+  ),
+});
+
+export const sendMessagesSchema = z.object({
+  studentIds: z.array(z.number().int()).min(1),
+  intro: z.string().max(2000).optional(),
+  signature: z.string().max(500).optional(),
+});
+
+export const setAbsencesSchema = z.object({
+  studentId: z.number().int(),
+  absences: z.number().min(0),
 });
 
 // Audit logging table for tracking all changes
@@ -201,7 +353,7 @@ export const auditLogs = pgTable("audit_logs", {
     enum: ["CREATE", "UPDATE", "DELETE", "LOGIN", "LOGOUT", "PASSWORD_RESET", "ENROLL", "ARCHIVE", "CONFIRM"]
   }).notNull(),
   entityType: text("entity_type", {
-    enum: ["user", "class", "assignment", "grade_contract", "student_contract", "assignment_progress", "attendance", "engagement_intention"]
+    enum: ["user", "class", "assignment", "grade_contract", "student_contract", "assignment_progress", "attendance", "class_session"]
   }).notNull(),
   entityId: integer("entity_id"),
   oldValues: json("old_values").$type<Record<string, unknown> | null>(),
@@ -223,11 +375,11 @@ export type AssignmentProgress = typeof assignmentProgress.$inferSelect;
 export type StudentInvitation = typeof studentInvitations.$inferSelect;
 export type InsertStudentInvitation = z.infer<typeof insertStudentInvitationSchema>;
 export type PasswordResetRequest = typeof passwordResetRequests.$inferSelect;
-export type EngagementIntention = typeof engagementIntentions.$inferSelect;
-export type InsertEngagementIntention = z.infer<typeof insertEngagementIntentionSchema>;
-export type UpdateEngagementIntention = z.infer<typeof updateEngagementIntentionSchema>;
-export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
-export type InsertAttendanceRecord = z.infer<typeof insertAttendanceRecordSchema>;
-export type UpdateAttendanceRecord = z.infer<typeof updateAttendanceRecordSchema>;
+export type ClassSession = typeof classSessions.$inferSelect;
+export type InsertClassSession = z.infer<typeof insertClassSessionSchema>;
+export type UpdateClassSession = z.infer<typeof updateClassSessionSchema>;
+export type SessionParticipation = typeof sessionParticipation.$inferSelect;
+export type ParticipationEntry = z.infer<typeof participationEntrySchema>;
+export type StudentAbsences = typeof studentAbsences.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;

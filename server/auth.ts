@@ -39,6 +39,19 @@ export function getSessionConfig() {
   };
 }
 
+/**
+ * Strip stored secrets before a user object crosses the wire.
+ *
+ * req.user carries the scrypt password hash and the encrypted Canvas token.
+ * Neither has any business reaching a browser: returning the hash is what the
+ * login and session endpoints used to do, and the Canvas token is a
+ * full-access credential for the instructor's Canvas account.
+ */
+export function toPublicUser(user: SelectUser) {
+  const { password: _password, canvasTokenEncrypted: _token, ...publicUser } = user;
+  return publicUser;
+}
+
 export function setupAuth(app: Express) {
   const { sessionStore, sessionSecret } = getSessionConfig();
   const isProduction = process.env.NODE_ENV === "production";
@@ -78,22 +91,13 @@ export function setupAuth(app: Express) {
     done(null, user);
   });
 
-  app.post("/api/register", async (req, res, next) => {
-    const existingUser = await storage.getUserByUsername(req.body.username);
-    if (existingUser) {
-      return res.status(400).send("Username already exists");
-    }
-
-    const user = await storage.createUser({
-      ...req.body,
-      password: await hashPassword(req.body.password),
-    });
-
-    req.login(user, (err) => {
-      if (err) return next(err);
-      res.status(201).json(user);
-    });
-  });
+  // Public self-registration is deliberately absent.
+  //
+  // It previously spread req.body straight into createUser with no validation
+  // and offered an instructor role in the signup form, so anyone with the URL
+  // could mint an instructor account. Students now arrive only by redeeming an
+  // invitation (POST /api/invitations/:token/setup); instructor accounts are
+  // provisioned out of band.
 
   app.post("/api/login", (req, res, next) => {
     passport.authenticate("local", (err: any, user: any, info: any) => {
@@ -109,7 +113,7 @@ export function setupAuth(app: Express) {
         if (err) {
           return next(err);
         }
-        return res.json(user);
+        return res.json(toPublicUser(user));
       });
     })(req, res, next);
   });
@@ -123,6 +127,6 @@ export function setupAuth(app: Express) {
 
   app.get("/api/user", (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    res.json(req.user);
+    res.json(toPublicUser(req.user));
   });
 }

@@ -1,627 +1,1099 @@
 /**
- * API Integration Tests
- * Tests the main API endpoints for authentication, classes, and assignments.
+ * API integration tests.
+ *
+ * These drive the real Express app and the real route modules with only the
+ * storage layer faked, so an authorization mistake in a route fails a test
+ * here. Most of what follows pins down access control, which is the class of
+ * bug this suite exists to catch.
  */
-
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { Express } from "express";
 import request from "supertest";
-import express, { type Request, Response, NextFunction } from "express";
-import session from "express-session";
-import passport from "passport";
-import { Strategy as LocalStrategy } from "passport-local";
-import MemoryStore from "memorystore";
+import { AssignmentStatus, MAX_ASSIGNMENT_STATUS, ParticipationLevel } from "@shared/constants";
 
-// ============================================================================
-// Test Setup - Self-contained middleware (no external imports that need DB)
-// ============================================================================
+process.env.SESSION_SECRET = "test-secret";
+process.env.NODE_ENV = "test";
 
-// Simple auth middleware for tests
-function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: "Unauthorized" });
+vi.mock("../storage", async () => {
+  const { fakeStorage } = await import("./helpers/fakeStorage");
+  return { storage: fakeStorage };
+});
+
+vi.mock("../audit", () => ({
+  auditService: {
+    log: vi.fn(),
+    logWithRequest: vi.fn(),
+    getLogsForStudent: vi.fn(async () => []),
+    getLogsForClass: vi.fn(async () => []),
+  },
+}));
+
+vi.mock("../websocket", () => ({
+  connectionManager: { broadcast: vi.fn() },
+  createProgressUpdateEvent: vi.fn(() => ({})),
+}));
+
+const { resetDb, addUser, addClass, addAssignment, addContract, enroll } = await import(
+  "./helpers/fakeStorage"
+);
+const { createTestApp, loginAs } = await import("./helpers/testApp");
+const { hashPassword } = await import("../auth");
+
+const PASSWORD = "password123";
+let app: Express;
+let hashed: string;
+
+beforeEach(async () => {
+  resetDb();
+  app = await createTestApp();
+  hashed = hashed || (await hashPassword(PASSWORD));
+});
+
+function instructor(username: string) {
+  return addUser({ role: "instructor", username, password: hashed, fullName: "Instructor" });
+}
+
+function student(username: string) {
+  return addUser({ role: "student", username, password: hashed, fullName: "Student" });
+}
+
+describe("Authentication", () => {
+  it("logs in with valid credentials", async () => {
+    const user = instructor("prof");
+    const res = await request(app).post("/api/login").send({
+      username: "prof",
+      password: PASSWORD,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(user.id);
+  });
+
+  it("rejects invalid credentials", async () => {
+    instructor("prof");
+    const res = await request(app).post("/api/login").send({
+      username: "prof",
+      password: "wrong",
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it("never returns the password hash", async () => {
+    instructor("prof");
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const login = await agent.post("/api/login").send({ username: "prof", password: PASSWORD });
+    expect(login.body).not.toHaveProperty("password");
+
+    const me = await agent.get("/api/user");
+    expect(me.status).toBe(200);
+    expect(me.body).not.toHaveProperty("password");
+  });
+
+  it("never returns the stored Canvas token", async () => {
+    const prof = instructor("prof");
+    prof.canvasTokenEncrypted = "encrypted-blob";
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const me = await agent.get("/api/user");
+    expect(me.body).not.toHaveProperty("canvasTokenEncrypted");
+    expect(JSON.stringify(me.body)).not.toContain("encrypted-blob");
+  });
+
+  it("returns 401 for an anonymous session lookup", async () => {
+    const res = await request(app).get("/api/user");
+    expect(res.status).toBe(401);
+  });
+
+  it("no longer exposes public self-registration", async () => {
+    const res = await request(app).post("/api/register").send({
+      username: "attacker",
+      password: PASSWORD,
+      role: "instructor",
+      fullName: "Attacker",
+    });
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("Password reset", () => {
+  it("never returns a reset token to an anonymous caller", async () => {
+    student("sam");
+
+    const res = await request(app).post("/api/auth/forgot-password").send({
+      username: "sam",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty("resetToken");
+    expect(res.body).not.toHaveProperty("token");
+  });
+
+  it("answers identically for an unknown username", async () => {
+    student("sam");
+
+    const known = await request(app).post("/api/auth/forgot-password").send({ username: "sam" });
+    const unknown = await request(app)
+      .post("/api/auth/forgot-password")
+      .send({ username: "nobody" });
+
+    expect(unknown.status).toBe(known.status);
+    expect(unknown.body).toEqual(known.body);
+  });
+});
+
+describe("Classes", () => {
+  it("creates a class as an instructor", async () => {
+    instructor("prof");
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.post("/api/classes").send({ name: "Rhetoric 101" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.name).toBe("Rhetoric 101");
+  });
+
+  it("refuses class creation by a student", async () => {
+    student("sam");
+    const agent = await loginAs(app, "sam", PASSWORD);
+
+    const res = await agent.post("/api/classes").send({ name: "Rhetoric 101" });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("lets an enrolled student read the class", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(cls.id);
+  });
+
+  it("blocks a student from reading a class they are not enrolled in", async () => {
+    const prof = instructor("prof");
+    student("outsider");
+    const cls = addClass(prof.id);
+
+    const agent = await loginAs(app, "outsider", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("blocks an instructor from reading a class they do not own", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id);
+
+    const agent = await loginAs(app, "other", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("blocks a non-owner from archiving a class", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id);
+
+    const agent = await loginAs(app, "other", PASSWORD);
+    const res = await agent.post(`/api/classes/${cls.id}/archive`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 404 for a class that does not exist", async () => {
+    instructor("prof");
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.get("/api/classes/9999");
+
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for a non-numeric class id", async () => {
+    instructor("prof");
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.get("/api/classes/not-a-number");
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("Assignments", () => {
+  it("creates an assignment as the class owner", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/assignments`).send({
+      name: "Essay 1",
+      scoringType: "status",
+      moduleGroup: null,
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.name).toBe("Essay 1");
+  });
+
+  it("blocks assignment creation by a non-owner instructor", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id);
+    const agent = await loginAs(app, "other", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/assignments`).send({
+      name: "Essay 1",
+      scoringType: "status",
+      moduleGroup: null,
+    });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("lets an enrolled student list assignments", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    addAssignment(cls.id, { name: "Essay 1" });
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}/assignments`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+  });
+
+  it("blocks an unenrolled student from listing assignments", async () => {
+    const prof = instructor("prof");
+    student("outsider");
+    const cls = addClass(prof.id);
+    addAssignment(cls.id);
+
+    const agent = await loginAs(app, "outsider", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}/assignments`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("returns assignments in displayOrder", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    addAssignment(cls.id, { name: "First", displayOrder: 1 });
+    addAssignment(cls.id, { name: "Second", displayOrder: 0 });
+
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}/assignments`);
+
+    expect(res.body.map((a: { name: string }) => a.name)).toEqual(["Second", "First"]);
+  });
+
+  it("refuses to edit an assignment belonging to another class", async () => {
+    const prof = instructor("prof");
+    const mine = addClass(prof.id);
+    const theirs = addClass(instructor("other").id);
+    const foreign = addAssignment(theirs.id, { name: "Not yours" });
+
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const res = await agent
+      .patch(`/api/classes/${mine.id}/assignments/${foreign.id}`)
+      .send({ name: "Hijacked" });
+
+    expect(res.status).toBe(404);
+    expect(foreign.name).toBe("Not yours");
+  });
+
+  it("rejects an assignment without required fields", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/assignments`).send({ name: "" });
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("Student privacy", () => {
+  it("blocks a student from reading a classmate progress", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const alex = student("alex");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    enroll(cls.id, alex.id);
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}/students/${alex.id}/progress`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("lets a student read their own progress", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}/students/${sam.id}/progress`);
+
+    expect(res.status).toBe(200);
+  });
+
+  it("blocks a student from reading the whole-class gradebook", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}/students/progress`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("blocks a student from reading the class roster", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}/students`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("blocks a student from reading who contracted for which grade", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}/student-contracts`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it("omits password hashes from the roster", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}/students`);
+
+    expect(res.status).toBe(200);
+    expect(res.body[0]).not.toHaveProperty("password");
+  });
+});
+
+describe("Contract selection", () => {
+  it("refuses to enroll a student who selects a contract in a class they are not in", async () => {
+    const prof = instructor("prof");
+    student("outsider");
+    const cls = addClass(prof.id);
+    const contract = addContract(cls.id);
+
+    const agent = await loginAs(app, "outsider", PASSWORD);
+    const res = await agent
+      .post(`/api/classes/${cls.id}/student-contract`)
+      .send({ contractId: contract.id });
+
+    expect(res.status).toBe(403);
+
+    // The selection must not have created an enrollment as a side effect.
+    const { db } = await import("./helpers/fakeStorage");
+    expect(db.studentContracts).toHaveLength(0);
+  });
+
+  it("lets an enrolled student choose a contract", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const contract = addContract(cls.id);
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent
+      .post(`/api/classes/${cls.id}/student-contract`)
+      .send({ contractId: contract.id });
+
+    expect(res.status).toBe(201);
+    expect(res.body.contractId).toBe(contract.id);
+  });
+
+  it("rejects a contract belonging to a different class", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    const otherClass = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const foreignContract = addContract(otherClass.id);
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent
+      .post(`/api/classes/${cls.id}/student-contract`)
+      .send({ contractId: foreignContract.id });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses to change a contract that is already confirmed", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    const contract = addContract(cls.id);
+    const other = addContract(cls.id, { grade: "B" });
+    const enrollment = enroll(cls.id, sam.id, contract.id);
+    enrollment.isConfirmed = true;
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent
+      .post(`/api/classes/${cls.id}/student-contract`)
+      .send({ contractId: other.id });
+
+    expect(res.status).toBe(409);
+    expect(enrollment.contractId).toBe(contract.id);
+  });
+});
+
+describe("Grading", () => {
+  it("records a status grade for an enrolled student", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const assignment = addAssignment(cls.id, { scoringType: "status" });
+
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const res = await agent
+      .post(`/api/classes/${cls.id}/students/${sam.id}/assignments/${assignment.id}/progress`)
+      .send({ status: AssignmentStatus.COMPLETE });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe(AssignmentStatus.COMPLETE);
+  });
+
+  it("blocks an instructor from grading in a class they do not own", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const sam = student("sam");
+    const cls = addClass(owner.id);
+    enroll(cls.id, sam.id);
+    const assignment = addAssignment(cls.id);
+
+    const agent = await loginAs(app, "other", PASSWORD);
+    const res = await agent
+      .post(`/api/classes/${cls.id}/students/${sam.id}/assignments/${assignment.id}/progress`)
+      .send({ status: AssignmentStatus.COMPLETE });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses to grade an assignment from another class", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    const otherClass = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const foreign = addAssignment(otherClass.id);
+
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const res = await agent
+      .post(`/api/classes/${cls.id}/students/${sam.id}/assignments/${foreign.id}/progress`)
+      .send({ status: AssignmentStatus.COMPLETE });
+
+    expect(res.status).toBe(404);
+  });
+
+  it("refuses to grade a student who is not enrolled", async () => {
+    const prof = instructor("prof");
+    const outsider = student("outsider");
+    const cls = addClass(prof.id);
+    const assignment = addAssignment(cls.id);
+
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const res = await agent
+      .post(`/api/classes/${cls.id}/students/${outsider.id}/assignments/${assignment.id}/progress`)
+      .send({ status: AssignmentStatus.COMPLETE });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects a status above the highest defined one", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const assignment = addAssignment(cls.id, { scoringType: "status" });
+
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const res = await agent
+      .post(`/api/classes/${cls.id}/students/${sam.id}/assignments/${assignment.id}/progress`)
+      .send({ status: MAX_ASSIGNMENT_STATUS + 1 });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a numeric score above the scale maximum", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const assignment = addAssignment(cls.id, { scoringType: "numeric" });
+
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const res = await agent
+      .post(`/api/classes/${cls.id}/students/${sam.id}/assignments/${assignment.id}/progress`)
+      .send({ numericGrade: 7 });
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("Error handling", () => {
+  it("answers with JSON instead of hanging when storage throws", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const { fakeStorage } = await import("./helpers/fakeStorage");
+    const original = fakeStorage.getAssignmentsByClass;
+    fakeStorage.getAssignmentsByClass = (async () => {
+      throw new Error("database is down");
+    }) as typeof original;
+
+    try {
+      const res = await agent.get(`/api/classes/${cls.id}/assignments`);
+      expect(res.status).toBe(500);
+      expect(res.body).toHaveProperty("message");
+    } finally {
+      fakeStorage.getAssignmentsByClass = original;
+    }
+  });
+});
+
+describe("Class sessions and participation", () => {
+  it("creates a session as the class owner", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent
+      .post(`/api/classes/${cls.id}/sessions`)
+      .send({ date: "2026-03-10", topic: "Peer review" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.topic).toBe("Peer review");
+  });
+
+  it("blocks a non-owner from creating a session", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id);
+    const agent = await loginAs(app, "other", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/sessions`).send({ date: "2026-03-10" });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses a second session on the same date", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    await agent.post(`/api/classes/${cls.id}/sessions`).send({ date: "2026-03-10" });
+    const res = await agent.post(`/api/classes/${cls.id}/sessions`).send({ date: "2026-03-10" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("records participation for a session", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const session = await agent.post(`/api/classes/${cls.id}/sessions`).send({ date: "2026-03-10" });
+    const res = await agent
+      .put(`/api/classes/${cls.id}/sessions/${session.body.id}/participation`)
+      .send({ entries: [{ studentId: sam.id, participation: ParticipationLevel.ACTIVE }] });
+
+    expect(res.status).toBe(200);
+    expect(res.body[0].participation).toBe(ParticipationLevel.ACTIVE);
+  });
+
+  it("is an upsert, so recording twice does not duplicate a student", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const session = await agent.post(`/api/classes/${cls.id}/sessions`).send({ date: "2026-03-10" });
+    const url = `/api/classes/${cls.id}/sessions/${session.body.id}/participation`;
+
+    await agent.put(url).send({ entries: [{ studentId: sam.id, participation: 1 }] });
+    const res = await agent.put(url).send({ entries: [{ studentId: sam.id, participation: 3 }] });
+
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].participation).toBe(3);
+  });
+
+  it("refuses to record participation for a student outside the class", async () => {
+    const prof = instructor("prof");
+    const outsider = student("outsider");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const session = await agent.post(`/api/classes/${cls.id}/sessions`).send({ date: "2026-03-10" });
+    const res = await agent
+      .put(`/api/classes/${cls.id}/sessions/${session.body.id}/participation`)
+      .send({ entries: [{ studentId: outsider.id, participation: 2 }] });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses to use a session from another class", async () => {
+    const prof = instructor("prof");
+    const mine = addClass(prof.id);
+    const theirs = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const session = await agent.post(`/api/classes/${theirs.id}/sessions`).send({ date: "2026-03-10" });
+    const res = await agent
+      .put(`/api/classes/${mine.id}/sessions/${session.body.id}/participation`)
+      .send({ entries: [] });
+
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a participation value outside the scale", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const session = await agent.post(`/api/classes/${cls.id}/sessions`).send({ date: "2026-03-10" });
+    const res = await agent
+      .put(`/api/classes/${cls.id}/sessions/${session.body.id}/participation`)
+      .send({ entries: [{ studentId: sam.id, participation: 9 }] });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("lets a student read their own participation but not a classmate's", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const alex = student("alex");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    enroll(cls.id, alex.id);
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+
+    expect((await agent.get(`/api/classes/${cls.id}/students/${sam.id}/participation`)).status).toBe(200);
+    expect((await agent.get(`/api/classes/${cls.id}/students/${alex.id}/participation`)).status).toBe(403);
+  });
+});
+
+describe("Absence totals", () => {
+  it("stores the fractional totals Qwickly produces", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent
+      .put(`/api/classes/${cls.id}/students/${sam.id}/absences`)
+      .send({ absences: 7.5 });
+
+    expect(res.status).toBe(200);
+    expect(Number(res.body.absences)).toBe(7.5);
+  });
+
+  it("blocks a non-owner from setting absences", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const sam = student("sam");
+    const cls = addClass(owner.id);
+    enroll(cls.id, sam.id);
+    const agent = await loginAs(app, "other", PASSWORD);
+
+    const res = await agent
+      .put(`/api/classes/${cls.id}/students/${sam.id}/absences`)
+      .send({ absences: 0 });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects a negative total", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent
+      .put(`/api/classes/${cls.id}/students/${sam.id}/absences`)
+      .send({ absences: -1 });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("lets a student read their own total but not a classmate's", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const alex = student("alex");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    enroll(cls.id, alex.id);
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+
+    expect((await agent.get(`/api/classes/${cls.id}/students/${sam.id}/absences`)).status).toBe(200);
+    expect((await agent.get(`/api/classes/${cls.id}/students/${alex.id}/absences`)).status).toBe(403);
+  });
+});
+
+describe("Contract update messages", () => {
+  it("previews a message per student without sending", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id, { name: "PHIL 352" });
+    enroll(cls.id, sam.id, addContract(cls.id, { grade: "A", maxAbsences: 2 }).id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/messages/preview`).send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.messages).toHaveLength(1);
+    expect(res.body.messages[0].body).toContain("Hi ");
+    expect(res.body.messages[0].subject).toContain("PHIL 352");
+  });
+
+  it("flags students with no linked Canvas account before sending", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id, addContract(cls.id).id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/messages/preview`).send({});
+
+    expect(res.body.unlinked).toHaveLength(1);
+    expect(res.body.unlinked[0].fullName).toBe("Student");
+  });
+
+  it("blocks a non-owner from previewing another class's messages", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id);
+    const agent = await loginAs(app, "other", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/messages/preview`).send({});
+
+    expect(res.status).toBe(403);
+  });
+
+  it("refuses to send without an explicit list of students", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/messages/send`).send({});
+
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses to send to a student outside the class", async () => {
+    const prof = instructor("prof");
+    const outsider = student("outsider");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent
+      .post(`/api/classes/${cls.id}/messages/send`)
+      .send({ studentIds: [outsider.id] });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("reports a missing Canvas token rather than half-sending", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id, addContract(cls.id).id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent
+      .post(`/api/classes/${cls.id}/messages/send`)
+      .send({ studentIds: [sam.id] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain("Canvas access token");
+  });
+});
+
+describe("Canvas roster import", () => {
+  it("refuses to import before a Canvas course is linked", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/canvas/import-roster`).send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain("Canvas course");
+  });
+
+  it("blocks a non-owner from importing into a class", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id, { canvasCourseId: 52959 });
+    const agent = await loginAs(app, "other", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/canvas/import-roster`).send({});
+
+    expect(res.status).toBe(403);
+  });
+
+  it("reports a missing token rather than failing obscurely", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id, { canvasCourseId: 52959 });
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/canvas/import-roster`).send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain("Canvas access token");
+  });
+
+  it("only offers setup links to students who cannot log in yet", async () => {
+    const prof = instructor("prof");
+    const withPassword = student("hasaccount");
+    const cls = addClass(prof.id);
+    enroll(cls.id, withPassword.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    // Everyone enrolled already has a password, so there is nothing to send
+    // and the endpoint must not demand a Canvas token to say so.
+    const res = await agent.post(`/api/classes/${cls.id}/invitations/send-setup-links`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.sent).toEqual([]);
+  });
+});
+
+describe("Contract edits apply to everyone on that contract", () => {
+  async function editContract(agent: any, classId: number, contractId: number, required: number) {
+    return agent.patch(`/api/classes/${classId}/contracts/${contractId}`).send({
+      grade: "A",
+      version: 1,
+      assignments: [],
+      maxAbsences: 2,
+      categoryRequirements: [{ category: "Discussion Logs", required }],
+    });
   }
-  next();
-}
 
-function requireInstructor(req: Request, res: Response, next: NextFunction) {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
-  if ((req.user as any).role !== "instructor") {
-    return res.status(403).json({ message: "Instructor access required" });
-  }
-  next();
-}
+  it("publishes an edit as a new version, keeping the old terms on record", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const original = addContract(cls.id, { grade: "A", version: 1 });
+    const agent = await loginAs(app, "prof", PASSWORD);
 
-interface TestUser {
-  id: number;
-  username: string;
-  password: string;
-  role: "instructor" | "student";
-  fullName: string;
-}
+    const res = await editContract(agent, cls.id, original.id, 3);
 
-interface TestClass {
-  id: number;
-  name: string;
-  instructorId: number;
-  description: string | null;
-  isArchived: boolean;
-}
+    expect(res.status).toBe(200);
+    expect(res.body.version).toBe(2);
 
-interface TestAssignment {
-  id: number;
-  name: string;
-  classId: number;
-  moduleGroup: string | null;
-  scoringType: "status" | "numeric";
-  displayOrder: number;
-  dueDate: Date | null;
-}
-
-// In-memory test data
-const testData = {
-  users: [] as TestUser[],
-  classes: [] as TestClass[],
-  assignments: [] as TestAssignment[],
-  studentContracts: [] as { studentId: number; classId: number; contractId: number | null }[],
-};
-
-function resetTestData() {
-  testData.users = [];
-  testData.classes = [];
-  testData.assignments = [];
-  testData.studentContracts = [];
-}
-
-function createInstructor(name = "Test Instructor"): TestUser {
-  const user: TestUser = {
-    id: testData.users.length + 1,
-    username: `instructor${testData.users.length + 1}`,
-    password: "password123",
-    role: "instructor",
-    fullName: name,
-  };
-  testData.users.push(user);
-  return user;
-}
-
-function createStudent(name = "Test Student"): TestUser {
-  const user: TestUser = {
-    id: testData.users.length + 1,
-    username: `student${testData.users.length + 1}`,
-    password: "password123",
-    role: "student",
-    fullName: name,
-  };
-  testData.users.push(user);
-  return user;
-}
-
-function createClass(instructorId: number, name = "Test Class"): TestClass {
-  const cls: TestClass = {
-    id: testData.classes.length + 1,
-    name,
-    instructorId,
-    description: null,
-    isArchived: false,
-  };
-  testData.classes.push(cls);
-  return cls;
-}
-
-function createAssignment(classId: number, name = "Test Assignment"): TestAssignment {
-  const assignment: TestAssignment = {
-    id: testData.assignments.length + 1,
-    name,
-    classId,
-    moduleGroup: null,
-    scoringType: "status",
-    displayOrder: testData.assignments.filter(a => a.classId === classId).length,
-    dueDate: null,
-  };
-  testData.assignments.push(assignment);
-  return assignment;
-}
-
-function enrollStudent(studentId: number, classId: number) {
-  testData.studentContracts.push({ studentId, classId, contractId: null });
-}
-
-// Create test app
-function createApp() {
-  const app = express();
-  app.use(express.json());
-
-  // Session
-  const SessionStore = MemoryStore(session);
-  app.use(
-    session({
-      secret: "test-secret",
-      resave: false,
-      saveUninitialized: false,
-      store: new SessionStore({ checkPeriod: 86400000 }),
-    })
-  );
-
-  // Passport
-  app.use(passport.initialize());
-  app.use(passport.session());
-
-  passport.use(
-    new LocalStrategy((username, password, done) => {
-      const user = testData.users.find(u => u.username === username && u.password === password);
-      if (!user) return done(null, false);
-      return done(null, user);
-    })
-  );
-
-  passport.serializeUser((user: any, done) => done(null, user.id));
-  passport.deserializeUser((id: number, done) => {
-    const user = testData.users.find(u => u.id === id);
-    done(null, user || null);
+    const { db } = await import("./helpers/fakeStorage");
+    const kept = db.gradeContracts.find((c) => c.id === original.id)!;
+    expect(kept.categoryRequirements).toEqual(original.categoryRequirements);
   });
 
-  // Auth routes
-  app.post("/api/login", passport.authenticate("local"), (req, res) => {
-    res.json(req.user);
+  it("moves a confirmed student onto the new terms without asking them", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    const original = addContract(cls.id, { grade: "A", version: 1 });
+    const enrollment = enroll(cls.id, sam.id, original.id);
+    enrollment.isConfirmed = true;
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await editContract(agent, cls.id, original.id, 3);
+
+    expect(enrollment.contractId).toBe(res.body.id);
+    expect(res.body.movedStudents).toBe(1);
   });
 
-  app.post("/api/logout", (req, res) => {
-    req.logout(() => res.json({ message: "Logged out" }));
+  it("leaves a moved student still confirmed", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const cls = addClass(prof.id);
+    const original = addContract(cls.id, { grade: "A", version: 1 });
+    const enrollment = enroll(cls.id, sam.id, original.id);
+    enrollment.isConfirmed = true;
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    await editContract(agent, cls.id, original.id, 3);
+
+    // Re-confirming would be an action on the student's part, which is exactly
+    // what this must not require.
+    expect(enrollment.isConfirmed).toBe(true);
   });
 
-  app.get("/api/user", (req, res) => {
-    if (req.isAuthenticated()) {
-      res.json(req.user);
-    } else {
-      res.status(401).json({ message: "Not authenticated" });
-    }
+  it("moves unconfirmed students too", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const alex = student("alex");
+    const cls = addClass(prof.id);
+    const original = addContract(cls.id, { grade: "A", version: 1 });
+    const first = enroll(cls.id, sam.id, original.id);
+    const second = enroll(cls.id, alex.id, original.id);
+    second.isConfirmed = true;
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await editContract(agent, cls.id, original.id, 3);
+
+    expect(res.body.movedStudents).toBe(2);
+    expect(first.contractId).toBe(res.body.id);
+    expect(second.contractId).toBe(res.body.id);
+  });
+});
+
+describe("Canvas grade pull", () => {
+  it("refuses to pull before a Canvas course is linked", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/canvas/pull-preview`).send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toContain("Canvas course");
   });
 
-  // Class routes
-  app.get("/api/classes", requireAuth, (req, res) => {
-    const user = req.user as TestUser;
-    if (user.role === "instructor") {
-      res.json(testData.classes.filter(c => c.instructorId === user.id));
-    } else {
-      const enrolledClassIds = testData.studentContracts
-        .filter(sc => sc.studentId === user.id)
-        .map(sc => sc.classId);
-      res.json(testData.classes.filter(c => enrolledClassIds.includes(c.id)));
-    }
+  it("blocks a non-owner from pulling into a class", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id, { canvasCourseId: 52959 });
+    const agent = await loginAs(app, "other", PASSWORD);
+
+    const res = await agent.post(`/api/classes/${cls.id}/canvas/pull-preview`).send({});
+
+    expect(res.status).toBe(403);
   });
 
-  app.post("/api/classes", requireInstructor, (req, res) => {
-    const user = req.user as TestUser;
-    const { name, description } = req.body;
+  it("refuses to map an assignment belonging to another class", async () => {
+    const prof = instructor("prof");
+    const mine = addClass(prof.id);
+    const theirs = addClass(prof.id);
+    const foreign = addAssignment(theirs.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
 
-    if (!name || typeof name !== "string") {
-      return res.status(400).json({ message: "Name is required" });
-    }
+    const res = await agent
+      .put(`/api/classes/${mine.id}/canvas/assignment-map`)
+      .send({ mappings: [{ assignmentId: foreign.id, canvasAssignmentId: 500 }] });
 
-    const newClass: TestClass = {
-      id: testData.classes.length + 1,
-      name,
-      instructorId: user.id,
-      description: description || null,
-      isArchived: false,
-    };
-    testData.classes.push(newClass);
-    res.status(201).json(newClass);
+    expect(res.status).toBe(400);
+    expect(foreign.canvasAssignmentId).toBeNull();
   });
 
-  app.get("/api/classes/:classId", requireAuth, (req, res) => {
-    const classId = parseInt(req.params.classId);
-    if (isNaN(classId)) {
-      return res.status(400).json({ message: "Invalid class ID" });
-    }
+  it("stores a mapping for its own assignments", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const mine = addAssignment(cls.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
 
-    const cls = testData.classes.find(c => c.id === classId);
-    if (!cls) {
-      return res.status(404).json({ message: "Class not found" });
-    }
+    const res = await agent
+      .put(`/api/classes/${cls.id}/canvas/assignment-map`)
+      .send({ mappings: [{ assignmentId: mine.id, canvasAssignmentId: 500 }] });
 
-    res.json(cls);
+    expect(res.status).toBe(200);
+    expect(mine.canvasAssignmentId).toBe(500);
   });
 
-  // Assignment routes
-  app.get("/api/classes/:classId/assignments", requireAuth, (req, res) => {
-    const classId = parseInt(req.params.classId);
-    if (isNaN(classId)) {
-      return res.status(400).json({ message: "Invalid class ID" });
-    }
+  it("requires at least one mapped assignment before pulling", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id, { canvasCourseId: 52959 });
+    addAssignment(cls.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
 
-    const assignments = testData.assignments
-      .filter(a => a.classId === classId)
-      .sort((a, b) => a.displayOrder - b.displayOrder);
-    res.json(assignments);
+    // No token either, but the mapping check should not be what fails last.
+    const res = await agent.post(`/api/classes/${cls.id}/canvas/pull-preview`).send({});
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("Canvas course link", () => {
+  it("sets the absence source without disturbing the course link", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id, { canvasCourseId: 52959 });
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent
+      .put(`/api/classes/${cls.id}/canvas/link`)
+      .send({ canvasAbsenceAssignmentId: 777 });
+
+    expect(res.status).toBe(200);
+    expect(cls.canvasAbsenceAssignmentId).toBe(777);
+    // Omitting the course id must not unlink the course.
+    expect(cls.canvasCourseId).toBe(52959);
   });
 
-  app.post("/api/classes/:classId/assignments", requireInstructor, (req, res) => {
-    const classId = parseInt(req.params.classId);
-    if (isNaN(classId)) {
-      return res.status(400).json({ message: "Invalid class ID" });
-    }
+  it("clears the absence source when explicitly set to null", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id, { canvasCourseId: 52959, canvasAbsenceAssignmentId: 777 });
+    const agent = await loginAs(app, "prof", PASSWORD);
 
-    const cls = testData.classes.find(c => c.id === classId);
-    if (!cls) {
-      return res.status(404).json({ message: "Class not found" });
-    }
+    await agent
+      .put(`/api/classes/${cls.id}/canvas/link`)
+      .send({ canvasAbsenceAssignmentId: null });
 
-    const user = req.user as TestUser;
-    if (cls.instructorId !== user.id) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-
-    const { name, moduleGroup, scoringType, dueDate } = req.body;
-    if (!name || !scoringType) {
-      return res.status(400).json({ message: "Name and scoringType are required" });
-    }
-
-    const assignment: TestAssignment = {
-      id: testData.assignments.length + 1,
-      name,
-      classId,
-      moduleGroup: moduleGroup || null,
-      scoringType,
-      displayOrder: testData.assignments.filter(a => a.classId === classId).length,
-      dueDate: dueDate ? new Date(dueDate) : null,
-    };
-    testData.assignments.push(assignment);
-    res.status(201).json(assignment);
+    expect(cls.canvasAbsenceAssignmentId).toBeNull();
+    expect(cls.canvasCourseId).toBe(52959);
   });
 
-  // Error handling
-  app.use((err: any, _req: any, res: any, _next: any) => {
-    const status = err.statusCode || 500;
-    res.status(status).json({ message: err.message });
+  it("rejects a request that would change nothing", async () => {
+    const prof = instructor("prof");
+    const cls = addClass(prof.id);
+    const agent = await loginAs(app, "prof", PASSWORD);
+
+    const res = await agent.put(`/api/classes/${cls.id}/canvas/link`).send({});
+
+    expect(res.status).toBe(400);
   });
 
-  return app;
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-describe("API Integration Tests", () => {
-  beforeEach(() => {
-    resetTestData();
-  });
-
-  describe("Authentication", () => {
-    it("should login with valid credentials", async () => {
-      const instructor = createInstructor();
-      const app = createApp();
-
-      const response = await request(app)
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      expect(response.status).toBe(200);
-      expect(response.body.username).toBe(instructor.username);
-      expect(response.body.role).toBe("instructor");
-    });
-
-    it("should reject invalid credentials", async () => {
-      createInstructor();
-      const app = createApp();
-
-      const response = await request(app)
-        .post("/api/login")
-        .send({ username: "wrong", password: "wrong" });
-
-      expect(response.status).toBe(401);
-    });
-
-    it("should return user info when authenticated", async () => {
-      const instructor = createInstructor();
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const response = await agent.get("/api/user");
-
-      expect(response.status).toBe(200);
-      expect(response.body.username).toBe(instructor.username);
-    });
-
-    it("should return 401 when not authenticated", async () => {
-      const app = createApp();
-
-      const response = await request(app).get("/api/user");
-
-      expect(response.status).toBe(401);
-    });
-
-    it("should logout successfully", async () => {
-      const instructor = createInstructor();
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const logoutResponse = await agent.post("/api/logout");
-      expect(logoutResponse.status).toBe(200);
-
-      const userResponse = await agent.get("/api/user");
-      expect(userResponse.status).toBe(401);
-    });
-  });
-
-  describe("Classes API", () => {
-    it("should create a class as instructor", async () => {
-      const instructor = createInstructor();
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const response = await agent
-        .post("/api/classes")
-        .send({ name: "New Class", description: "A test class" });
-
-      expect(response.status).toBe(201);
-      expect(response.body.name).toBe("New Class");
-      expect(response.body.instructorId).toBe(instructor.id);
-    });
-
-    it("should reject class creation as student", async () => {
-      const student = createStudent();
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: student.username, password: student.password });
-
-      const response = await agent
-        .post("/api/classes")
-        .send({ name: "New Class" });
-
-      expect(response.status).toBe(403);
-    });
-
-    it("should get instructor's own classes", async () => {
-      const instructor = createInstructor();
-      const otherInstructor = createInstructor("Other Instructor");
-      createClass(instructor.id, "My Class");
-      createClass(otherInstructor.id, "Other Class");
-
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const response = await agent.get("/api/classes");
-
-      expect(response.status).toBe(200);
-      expect(response.body).toHaveLength(1);
-      expect(response.body[0].name).toBe("My Class");
-    });
-
-    it("should get enrolled classes for student", async () => {
-      const instructor = createInstructor();
-      const student = createStudent();
-      const enrolledClass = createClass(instructor.id, "Enrolled Class");
-      createClass(instructor.id, "Not Enrolled Class");
-      enrollStudent(student.id, enrolledClass.id);
-
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: student.username, password: student.password });
-
-      const response = await agent.get("/api/classes");
-
-      expect(response.status).toBe(200);
-      expect(response.body).toHaveLength(1);
-      expect(response.body[0].name).toBe("Enrolled Class");
-    });
-
-    it("should get class by ID", async () => {
-      const instructor = createInstructor();
-      const cls = createClass(instructor.id, "Test Class");
-
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const response = await agent.get(`/api/classes/${cls.id}`);
-
-      expect(response.status).toBe(200);
-      expect(response.body.name).toBe("Test Class");
-    });
-
-    it("should return 404 for non-existent class", async () => {
-      const instructor = createInstructor();
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const response = await agent.get("/api/classes/999");
-
-      expect(response.status).toBe(404);
-    });
-
-    it("should return 400 for invalid class ID", async () => {
-      const instructor = createInstructor();
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const response = await agent.get("/api/classes/invalid");
-
-      expect(response.status).toBe(400);
-    });
-  });
-
-  describe("Assignments API", () => {
-    it("should create assignment as class owner", async () => {
-      const instructor = createInstructor();
-      const cls = createClass(instructor.id);
-
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const response = await agent
-        .post(`/api/classes/${cls.id}/assignments`)
-        .send({ name: "Homework 1", scoringType: "status", moduleGroup: "Week 1" });
-
-      expect(response.status).toBe(201);
-      expect(response.body.name).toBe("Homework 1");
-      expect(response.body.classId).toBe(cls.id);
-    });
-
-    it("should reject assignment creation by non-owner", async () => {
-      const instructor1 = createInstructor();
-      const instructor2 = createInstructor("Other Instructor");
-      const cls = createClass(instructor1.id);
-
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor2.username, password: instructor2.password });
-
-      const response = await agent
-        .post(`/api/classes/${cls.id}/assignments`)
-        .send({ name: "Homework 1", scoringType: "status" });
-
-      expect(response.status).toBe(403);
-    });
-
-    it("should get assignments for a class", async () => {
-      const instructor = createInstructor();
-      const cls = createClass(instructor.id);
-      createAssignment(cls.id, "Assignment 1");
-      createAssignment(cls.id, "Assignment 2");
-
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const response = await agent.get(`/api/classes/${cls.id}/assignments`);
-
-      expect(response.status).toBe(200);
-      expect(response.body).toHaveLength(2);
-    });
-
-    it("should return assignments sorted by displayOrder", async () => {
-      const instructor = createInstructor();
-      const cls = createClass(instructor.id);
-
-      // Create in reverse order
-      const a1 = createAssignment(cls.id, "First");
-      const a2 = createAssignment(cls.id, "Second");
-      const a3 = createAssignment(cls.id, "Third");
-
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const response = await agent.get(`/api/classes/${cls.id}/assignments`);
-
-      expect(response.status).toBe(200);
-      expect(response.body[0].name).toBe("First");
-      expect(response.body[1].name).toBe("Second");
-      expect(response.body[2].name).toBe("Third");
-    });
-
-    it("should create assignment with due date", async () => {
-      const instructor = createInstructor();
-      const cls = createClass(instructor.id);
-
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const dueDate = "2024-12-31T23:59:59Z";
-      const response = await agent
-        .post(`/api/classes/${cls.id}/assignments`)
-        .send({ name: "Final Project", scoringType: "status", dueDate });
-
-      expect(response.status).toBe(201);
-      expect(response.body.dueDate).toBeTruthy();
-    });
-
-    it("should reject assignment without required fields", async () => {
-      const instructor = createInstructor();
-      const cls = createClass(instructor.id);
-
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: instructor.username, password: instructor.password });
-
-      const response = await agent
-        .post(`/api/classes/${cls.id}/assignments`)
-        .send({ name: "Missing scoring type" }); // Missing scoringType
-
-      expect(response.status).toBe(400);
-    });
-  });
-
-  describe("Authorization Middleware", () => {
-    it("should block unauthenticated requests to protected routes", async () => {
-      const app = createApp();
-
-      const response = await request(app).get("/api/classes");
-
-      expect(response.status).toBe(401);
-    });
-
-    it("should block students from instructor-only routes", async () => {
-      const student = createStudent();
-      const app = createApp();
-      const agent = request.agent(app);
-
-      await agent
-        .post("/api/login")
-        .send({ username: student.username, password: student.password });
-
-      const response = await agent
-        .post("/api/classes")
-        .send({ name: "Should Fail" });
-
-      expect(response.status).toBe(403);
-    });
+  it("blocks a non-owner from relinking a class", async () => {
+    const owner = instructor("owner");
+    instructor("other");
+    const cls = addClass(owner.id);
+    const agent = await loginAs(app, "other", PASSWORD);
+
+    const res = await agent
+      .put(`/api/classes/${cls.id}/canvas/link`)
+      .send({ canvasCourseId: 1 });
+
+    expect(res.status).toBe(403);
   });
 });

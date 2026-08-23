@@ -1,14 +1,14 @@
 import "dotenv/config";
-import express, { type Request, Response, NextFunction } from "express";
+import express from "express";
 import rateLimit from "express-rate-limit";
-import { registerRoutes } from "./routes";
+import { createServer } from "http";
 import { registerRouteModules } from "./routes/index";
 import { setupVite, serveStatic, log } from "./vite";
 import { setupWebSocket } from "./websocket";
 import { getSessionConfig, setupAuth } from "./auth";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
-import { AppError, ValidationError } from "./errors";
+import { errorHandler } from "./middleware";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -39,8 +39,9 @@ const authLimiter = rateLimit({
 // Apply rate limiters
 app.use(apiLimiter);
 app.use("/api/login", authLimiter);
-app.use("/api/register", authLimiter);
-app.use("/api/password-reset", authLimiter);
+app.use("/api/auth/forgot-password", authLimiter);
+app.use("/api/auth/reset-password", authLimiter);
+app.use("/api/invitations", authLimiter);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -82,11 +83,10 @@ app.get("/api/health", (_req, res) => {
   // Set up authentication (must be before any routes that use requireAuth)
   setupAuth(app);
 
-  // Register modular routes first (classes, assignments, etc.)
+  // Register the API route modules (see server/routes/index.ts)
   registerRouteModules(app);
 
-  // Register remaining routes from monolithic routes.ts
-  const server = await registerRoutes(app);
+  const server = createServer(app);
 
   // Set up WebSocket for real-time updates
   try {
@@ -97,44 +97,15 @@ app.get("/api/health", (_req, res) => {
     console.error("Failed to initialize WebSocket:", error);
   }
 
-  // Centralized error handling middleware
-  app.use((err: Error | AppError, _req: Request, res: Response, _next: NextFunction) => {
-    // Log error details (always log for debugging)
-    console.error("Error:", {
-      name: err.name,
-      message: err.message,
-      stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
-      ...(err instanceof AppError && { statusCode: err.statusCode, isOperational: err.isOperational }),
-    });
-
-    // Handle known operational errors (AppError instances)
-    if (err instanceof AppError) {
-      const response: Record<string, unknown> = { message: err.message };
-
-      // Include validation errors if present
-      if (err instanceof ValidationError && Object.keys(err.errors).length > 0) {
-        response.errors = err.errors;
-      }
-
-      // Include stack trace in development
-      if (process.env.NODE_ENV === "development") {
-        response.stack = err.stack;
-      }
-
-      return res.status(err.statusCode).json(response);
-    }
-
-    // Handle unknown errors (programming errors, etc.)
-    const statusCode = 500;
-    const message = process.env.NODE_ENV === "production"
-      ? "Internal server error"
-      : err.message || "Internal server error";
-
-    res.status(statusCode).json({
-      message,
-      ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
-    });
+  // Anything under /api that reached here matched no route. Without this the
+  // SPA catch-all below answers with index.html and a 200, so a client calling
+  // a removed or mistyped endpoint gets HTML to parse as JSON rather than a
+  // clean 404.
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ message: "Not found" });
   });
+
+  app.use(errorHandler);
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
@@ -151,12 +122,28 @@ app.get("/api/health", (_req, res) => {
   console.log(`Current working directory: ${process.cwd()}`);
   
   // Log uncaught errors
+  // After an uncaught exception the process is in an undefined state. Logging
+  // and carrying on is worse than stopping: a half-broken server still holding
+  // the port keeps a supervisor from restarting it, and hides the failure. This
+  // was not academic -- a failed bind previously left the process "running"
+  // while serving nothing.
   process.on('uncaughtException', (error) => {
     console.error('Uncaught Exception:', error);
+    process.exit(1);
   });
 
   process.on('unhandledRejection', (error) => {
     console.error('Unhandled Rejection:', error);
+    process.exit(1);
+  });
+
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE') {
+      console.error(`Port ${port} is already in use. Stop the other process and try again.`);
+    } else {
+      console.error('Server error:', error);
+    }
+    process.exit(1);
   });
 
   server.listen({

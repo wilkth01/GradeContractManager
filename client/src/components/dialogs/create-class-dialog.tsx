@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertClassSchema } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Dialog,
@@ -24,12 +24,30 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type FormData = {
   name: string;
   description?: string;
   semesterStartDate?: string;
+  canvasCourseId?: number | null;
 };
+
+interface CanvasConnection {
+  connected: boolean;
+}
+
+interface CanvasCourse {
+  id: number;
+  name: string;
+  courseCode?: string;
+}
 
 export function CreateClassDialog() {
   const [open, setOpen] = useState(false);
@@ -45,7 +63,18 @@ export function CreateClassDialog() {
       name: "",
       description: "",
       semesterStartDate: today,
+      canvasCourseId: null,
     },
+  });
+
+  const { data: connection } = useQuery<CanvasConnection>({
+    queryKey: ["/api/canvas/connection"],
+    enabled: open,
+  });
+
+  const { data: canvasCourses } = useQuery<CanvasCourse[]>({
+    queryKey: ["/api/canvas/courses"],
+    enabled: open && !!connection?.connected,
   });
 
   const createClassMutation = useMutation({
@@ -134,11 +163,47 @@ export function CreateClassDialog() {
                   </FormControl>
                   <FormMessage />
                   <p className="text-sm text-muted-foreground">
-                    This determines the current week calculation for engagement tracking
+                    Used to work out which week of the semester the class is in
                   </p>
                 </FormItem>
               )}
             />
+            {connection?.connected && (
+              <FormField
+                control={form.control}
+                name="canvasCourseId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Canvas Course (optional)</FormLabel>
+                    <Select
+                      value={field.value ? String(field.value) : "__none__"}
+                      onValueChange={(value) =>
+                        field.onChange(value === "__none__" ? null : parseInt(value))
+                      }
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Not linked" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__none__">Not linked</SelectItem>
+                        {(canvasCourses ?? []).map((course) => (
+                          <SelectItem key={course.id} value={String(course.id)}>
+                            {course.name}
+                            {course.courseCode ? ` (${course.courseCode})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                    <p className="text-sm text-muted-foreground">
+                      Link now and you can import the roster straight from Canvas.
+                    </p>
+                  </FormItem>
+                )}
+              />
+            )}
             <Button
               type="submit"
               className="w-full"

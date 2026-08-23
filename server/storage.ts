@@ -1,7 +1,7 @@
-import { User, InsertUser, Class, Assignment, GradeContract, StudentContract, AssignmentProgress, StudentInvitation, InsertStudentInvitation, PasswordResetRequest, EngagementIntention, InsertEngagementIntention, UpdateEngagementIntention, AttendanceRecord, InsertAttendanceRecord, UpdateAttendanceRecord } from "@shared/schema";
+import { User, InsertUser, Class, Assignment, GradeContract, StudentContract, AssignmentProgress, StudentInvitation, InsertStudentInvitation, PasswordResetRequest, ClassSession, SessionParticipation, ParticipationEntry, StudentAbsences } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, inArray, sql, lt, max } from "drizzle-orm";
-import { users, classes, assignments, gradeContracts, studentContracts, assignmentProgress, studentInvitations, passwordResetRequests, engagementIntentions, attendanceRecords } from "@shared/schema";
+import { users, classes, assignments, gradeContracts, studentContracts, assignmentProgress, studentInvitations, passwordResetRequests, sessionParticipation, studentAbsences, classSessions } from "@shared/schema";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { pool } from "./db";
@@ -13,6 +13,10 @@ export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  setCanvasToken(userId: number, encrypted: string | null): Promise<void>;
+  setCanvasUserId(userId: number, canvasUserId: number | null): Promise<void>;
+  linkCanvasCourse(classId: number, updates: { canvasCourseId?: number | null; canvasAbsenceAssignmentId?: number | null }): Promise<Class>;
+  setCanvasAssignmentIds(classId: number, mappings: { assignmentId: number; canvasAssignmentId: number | null }[]): Promise<void>;
 
   createClass(classData: Omit<Class, "id" | "isArchived">): Promise<Class>;
   getClass(id: number): Promise<Class | undefined>;
@@ -29,7 +33,10 @@ export interface IStorage {
 
   createGradeContract(contract: Omit<GradeContract, "id">): Promise<GradeContract>;
   getContractsByClass(classId: number): Promise<GradeContract[]>;
-  updateGradeContract(contract: GradeContract): Promise<GradeContract>;
+  publishContractVersion(
+    previous: GradeContract,
+    changes: Omit<GradeContract, "id" | "version">
+  ): Promise<{ contract: GradeContract; movedStudents: number }>;
 
   setStudentContract(contract: Omit<StudentContract, "id">): Promise<StudentContract>;
   getStudentContract(studentId: number, classId: number): Promise<StudentContract | undefined>;
@@ -49,7 +56,9 @@ export interface IStorage {
   resetStudentContract(studentId: number, classId: number): Promise<StudentContract>;
 
   // Student invitation methods
-  createStudentInvitation(invitation: InsertStudentInvitation): Promise<StudentInvitation>;
+  createStudentInvitation(invitation: InsertStudentInvitation & { userId?: number | null }): Promise<StudentInvitation>;
+  getUserByCanvasId(canvasUserId: number): Promise<User | undefined>;
+  createCanvasStudent(input: { username: string; fullName: string; email: string | null; canvasUserId: number }): Promise<User>;
   getStudentInvitationByToken(token: string): Promise<StudentInvitation | undefined>;
   markInvitationAsUsed(token: string): Promise<void>;
   getInvitationsByClass(classId: number): Promise<StudentInvitation[]>;
@@ -66,27 +75,19 @@ export interface IStorage {
   markPasswordResetAsNotified(id: number): Promise<void>;
   deleteExpiredPasswordResets(): Promise<void>;
 
-  // Engagement intention methods
-  createEngagementIntention(intention: InsertEngagementIntention): Promise<EngagementIntention>;
-  getEngagementIntention(studentId: number, classId: number, weekNumber: number): Promise<EngagementIntention | undefined>;
-  getEngagementIntentionById(id: number): Promise<EngagementIntention | undefined>;
-  updateEngagementIntention(id: number, updates: UpdateEngagementIntention): Promise<EngagementIntention>;
-  getStudentEngagementIntentions(studentId: number, classId: number): Promise<EngagementIntention[]>;
-  getClassEngagementIntentions(classId: number): Promise<EngagementIntention[]>;
-  getCurrentWeekEngagementIntentions(classId: number, weekNumber: number): Promise<EngagementIntention[]>;
-
-  // Attendance tracking methods
-  getStudentAttendance(studentId: number, classId: number): Promise<AttendanceRecord[]>;
-  getAttendanceRecord(attendanceId: number): Promise<AttendanceRecord | undefined>;
-  createAttendanceRecord(attendance: InsertAttendanceRecord): Promise<AttendanceRecord>;
-  updateAttendanceRecord(attendanceId: number, updates: UpdateAttendanceRecord): Promise<AttendanceRecord>;
-  // Instructor dashboard attendance methods
-  getAttendanceForClass(classId: number): Promise<AttendanceRecord[]>;
-  getAttendanceForStudentInClass(studentId: number, classId: number): Promise<AttendanceRecord[]>;
-  getClassAttendanceByDate(classId: number, date: string): Promise<AttendanceRecord[]>;
-  batchUpsertAttendance(records: { studentId: number; classId: number; date: string; isPresent: boolean; notes?: string }[]): Promise<void>;
-  updateStudentAttendance(studentId: number, classId: number, date: Date, isPresent: boolean): Promise<AttendanceRecord>;
-  createStudentAttendance(studentId: number, classId: number, date: Date, isPresent: boolean): Promise<AttendanceRecord>;
+  // Class sessions and attendance
+  createClassSession(session: { classId: number; date: Date; topic?: string | null; notes?: string | null }): Promise<ClassSession>;
+  getClassSessions(classId: number): Promise<ClassSession[]>;
+  getClassSession(sessionId: number): Promise<ClassSession | undefined>;
+  updateClassSession(sessionId: number, updates: { date?: Date; topic?: string | null; notes?: string | null }): Promise<ClassSession>;
+  deleteClassSession(sessionId: number): Promise<void>;
+  getSessionParticipation(sessionId: number): Promise<SessionParticipation[]>;
+  recordSessionParticipation(sessionId: number, entries: ParticipationEntry[]): Promise<void>;
+  getClassParticipation(classId: number): Promise<SessionParticipation[]>;
+  getStudentParticipation(studentId: number, classId: number): Promise<SessionParticipation[]>;
+  getClassAbsences(classId: number): Promise<StudentAbsences[]>;
+  getStudentAbsences(studentId: number, classId: number): Promise<StudentAbsences | undefined>;
+  setStudentAbsences(studentId: number, classId: number, absences: number, source?: string): Promise<StudentAbsences>;
 
   // Clone class methods
   cloneClass(classId: number, instructorId: number): Promise<Class>;
@@ -115,6 +116,52 @@ export class DatabaseStorage implements IStorage {
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values(insertUser).returning();
     return user;
+  }
+
+  async setCanvasToken(userId: number, encrypted: string | null): Promise<void> {
+    await db.update(users).set({ canvasTokenEncrypted: encrypted }).where(eq(users.id, userId));
+  }
+
+  async setCanvasUserId(userId: number, canvasUserId: number | null): Promise<void> {
+    await db.update(users).set({ canvasUserId }).where(eq(users.id, userId));
+  }
+
+  async linkCanvasCourse(
+    classId: number,
+    updates: { canvasCourseId?: number | null; canvasAbsenceAssignmentId?: number | null }
+  ): Promise<Class> {
+    const [updated] = await db
+      .update(classes)
+      .set({
+        ...(updates.canvasCourseId !== undefined
+          ? { canvasCourseId: updates.canvasCourseId }
+          : {}),
+        ...(updates.canvasAbsenceAssignmentId !== undefined
+          ? { canvasAbsenceAssignmentId: updates.canvasAbsenceAssignmentId }
+          : {}),
+      })
+      .where(eq(classes.id, classId))
+      .returning();
+    return updated;
+  }
+
+  /** Scoped to the class, so a mapping cannot reach another class's assignment. */
+  async setCanvasAssignmentIds(
+    classId: number,
+    mappings: { assignmentId: number; canvasAssignmentId: number | null }[]
+  ): Promise<void> {
+    if (mappings.length === 0) return;
+
+    await db.transaction(async (tx) => {
+      for (const mapping of mappings) {
+        await tx
+          .update(assignments)
+          .set({ canvasAssignmentId: mapping.canvasAssignmentId })
+          .where(
+            and(eq(assignments.id, mapping.assignmentId), eq(assignments.classId, classId))
+          );
+      }
+    });
   }
 
   async createClass(classData: Omit<Class, "id" | "isArchived">): Promise<Class> {
@@ -167,11 +214,17 @@ export class DatabaseStorage implements IStorage {
     // Delete all student invitations for this class
     await db.delete(studentInvitations).where(eq(studentInvitations.classId, id));
 
-    // Delete all engagement intentions for this class
-    await db.delete(engagementIntentions).where(eq(engagementIntentions.classId, id));
-
-    // Delete all attendance records for this class
-    await db.delete(attendanceRecords).where(eq(attendanceRecords.classId, id));
+    // Delete attendance, then the sessions it hangs off
+    const sessions = await db
+      .select({ id: classSessions.id })
+      .from(classSessions)
+      .where(eq(classSessions.classId, id));
+    const sessionIds = sessions.map((s) => s.id);
+    if (sessionIds.length > 0) {
+      await db.delete(sessionParticipation).where(inArray(sessionParticipation.sessionId, sessionIds));
+    }
+    await db.delete(classSessions).where(eq(classSessions.classId, id));
+    await db.delete(studentAbsences).where(eq(studentAbsences.classId, id));
 
     // Finally delete the class itself
     await db.delete(classes).where(eq(classes.id, id));
@@ -235,13 +288,39 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(gradeContracts).where(eq(gradeContracts.classId, classId));
   }
 
-  async updateGradeContract(contract: GradeContract): Promise<GradeContract> {
-    const [updatedContract] = await db
-      .update(gradeContracts)
-      .set(contract)
-      .where(eq(gradeContracts.id, contract.id))
-      .returning();
-    return updatedContract;
+  /**
+   * Publish an edited contract as a new version.
+   *
+   * Every student on the previous version moves to the new one, whether or not
+   * they had confirmed, and keeps their confirmation. The syllabus reserves the
+   * right to change a contract mid-semester and it is only ever exercised to
+   * reduce requirements, so applying the change to everyone is both what was
+   * agreed and what benefits students -- holding someone to superseded, stricter
+   * terms would be the harm here.
+   *
+   * The previous row is kept rather than overwritten, so there is a record of
+   * what the contract used to require if a student ever asks.
+   */
+  async publishContractVersion(
+    previous: GradeContract,
+    changes: Omit<GradeContract, "id" | "version">
+  ): Promise<{ contract: GradeContract; movedStudents: number }> {
+    return db.transaction(async (tx) => {
+      const [published] = await tx
+        .insert(gradeContracts)
+        .values({ ...changes, version: previous.version + 1 })
+        .returning();
+
+      // Only contractId changes; isConfirmed is left alone so nobody has to
+      // re-confirm a contract they already accepted.
+      const moved = await tx
+        .update(studentContracts)
+        .set({ contractId: published.id })
+        .where(eq(studentContracts.contractId, previous.id))
+        .returning();
+
+      return { contract: published, movedStudents: moved.length };
+    });
   }
 
   async setStudentContract(contract: Omit<StudentContract, "id">): Promise<StudentContract> {
@@ -334,24 +413,6 @@ export class DatabaseStorage implements IStorage {
       .where(inArray(assignmentProgress.assignmentId, assignmentIds));
   }
 
-  async getClassStudents(classId: number): Promise<User[]> {
-    const result = await db
-      .select({
-        id: users.id,
-        username: users.username,
-        password: users.password,
-        role: users.role,
-        fullName: users.fullName,
-        email: users.email,
-        isTemporary: users.isTemporary,
-      })
-      .from(users)
-      .innerJoin(studentContracts, eq(users.id, studentContracts.studentId))
-      .where(eq(studentContracts.classId, classId));
-
-    return result;
-  }
-
   async getStudentContractsForClass(classId: number): Promise<(StudentContract & { contract?: GradeContract })[]> {
     const result = await db
       .select({
@@ -396,7 +457,6 @@ export class DatabaseStorage implements IStorage {
 
   async getEnrolledStudents(classId: number): Promise<User[]> {
     try {
-      console.log(`Fetching enrolled students for class ${classId}`);
       const enrolledStudents = await db
         .select()
         .from(users)
@@ -407,17 +467,7 @@ export class DatabaseStorage implements IStorage {
             eq(users.role, "student")
           )
         );
-      console.log(`Found ${enrolledStudents.length} enrolled students for class ${classId}`);
-
-      return enrolledStudents.map(row => ({
-        id: row.users.id,
-        username: row.users.username,
-        password: row.users.password,
-        role: row.users.role,
-        fullName: row.users.fullName,
-        email: row.users.email,
-        isTemporary: row.users.isTemporary,
-      }));
+      return enrolledStudents.map(row => row.users);
     } catch (error) {
       console.error(`Error getting enrolled students for class ${classId}:`, error);
       throw error;
@@ -425,7 +475,6 @@ export class DatabaseStorage implements IStorage {
   }
   async getClassesByStudent(studentId: number): Promise<Class[]> {
     try {
-      console.log(`Fetching classes for student ${studentId}`);
       const studentClasses = await db
         .select()
         .from(classes)
@@ -438,16 +487,7 @@ export class DatabaseStorage implements IStorage {
         )
         .where(eq(classes.isArchived, false));
 
-      console.log(`Found ${studentClasses.length} classes for student ${studentId}`);
-
-      return studentClasses.map(row => ({
-        id: row.classes.id,
-        name: row.classes.name,
-        instructorId: row.classes.instructorId,
-        isArchived: row.classes.isArchived ?? false,
-        description: row.classes.description ?? null,
-        semesterStartDate: row.classes.semesterStartDate ?? null,
-      }));
+      return studentClasses.map(row => row.classes);
     } catch (error) {
       console.error(`Error getting classes for student ${studentId}:`, error);
       throw error;
@@ -500,7 +540,41 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Student invitation methods
-  async createStudentInvitation(invitation: InsertStudentInvitation): Promise<StudentInvitation> {
+  async getUserByCanvasId(canvasUserId: number): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.canvasUserId, canvasUserId));
+    return user;
+  }
+
+  /**
+   * Create a student account from a Canvas roster entry.
+   *
+   * No password: the account is unusable until the student redeems an
+   * invitation, which is what isTemporary marks.
+   */
+  async createCanvasStudent(input: {
+    username: string;
+    fullName: string;
+    email: string | null;
+    canvasUserId: number;
+  }): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values({
+        username: input.username,
+        password: null,
+        fullName: input.fullName,
+        email: input.email,
+        role: "student",
+        isTemporary: true,
+        canvasUserId: input.canvasUserId,
+      })
+      .returning();
+    return user;
+  }
+
+  async createStudentInvitation(
+    invitation: InsertStudentInvitation & { userId?: number | null }
+  ): Promise<StudentInvitation> {
     const token = crypto.randomUUID();
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiration
@@ -564,50 +638,69 @@ export class DatabaseStorage implements IStorage {
     return newUser;
   }
 
-  async setupStudentPassword(token: string, username: string, password: string): Promise<User> {
+  /**
+   * Redeem an invitation by setting a password.
+   *
+   * An invitation that names a userId belongs to an account that already
+   * exists -- imported from a Canvas roster -- so this only sets the password.
+   * Letting that student invent a second username would orphan the account the
+   * class is enrolled against.
+   */
+  async setupStudentPassword(
+    token: string,
+    username: string | undefined,
+    password: string
+  ): Promise<User> {
     const invitation = await this.getStudentInvitationByToken(token);
     if (!invitation || invitation.isUsed || invitation.expiresAt < new Date()) {
-      throw new Error('Invalid or expired invitation token');
+      throw new Error("Invalid or expired invitation token");
     }
 
-    // Create or update the student user
-    const existingUser = await this.getUserByUsername(username);
     let user: User;
 
-    if (existingUser && existingUser.isTemporary) {
-      // Update temporary user
-      const [updatedUser] = await db
+    if (invitation.userId) {
+      const [updated] = await db
         .update(users)
-        .set({
-          username,
-          password,
-          isTemporary: false,
-        })
-        .where(eq(users.id, existingUser.id))
+        .set({ password, isTemporary: false })
+        .where(eq(users.id, invitation.userId))
         .returning();
-      user = updatedUser;
-    } else if (!existingUser) {
-      // Create new user
-      const [newUser] = await db
-        .insert(users)
-        .values({
-          username,
-          password,
-          email: invitation.email,
-          fullName: invitation.fullName,
-          role: 'student',
-          isTemporary: false,
-        })
-        .returning();
-      user = newUser;
+      if (!updated) {
+        throw new Error("The account for this invitation no longer exists");
+      }
+      user = updated;
     } else {
-      throw new Error('Username already exists');
+      if (!username) {
+        throw new Error("A username is required");
+      }
+
+      const existingUser = await this.getUserByUsername(username);
+
+      if (existingUser && existingUser.isTemporary) {
+        const [updatedUser] = await db
+          .update(users)
+          .set({ username, password, isTemporary: false })
+          .where(eq(users.id, existingUser.id))
+          .returning();
+        user = updatedUser;
+      } else if (!existingUser) {
+        const [newUser] = await db
+          .insert(users)
+          .values({
+            username,
+            password,
+            email: invitation.email,
+            fullName: invitation.fullName,
+            role: "student",
+            isTemporary: false,
+          })
+          .returning();
+        user = newUser;
+      } else {
+        throw new Error("Username already exists");
+      }
     }
 
-    // Enroll the student in the class
     await this.enrollStudent(invitation.classId, user.id);
-
-    // Mark invitation as used
     await this.markInvitationAsUsed(token);
 
     return user;
@@ -684,277 +777,172 @@ export class DatabaseStorage implements IStorage {
       .where(lt(passwordResetRequests.expiresAt, new Date()));
   }
 
-  // Engagement intention methods
-  async createEngagementIntention(intention: InsertEngagementIntention): Promise<EngagementIntention> {
-    const [newIntention] = await db
-      .insert(engagementIntentions)
+  // ==========================================================================
+  // Class sessions and attendance
+  // ==========================================================================
+
+  async createClassSession(session: {
+    classId: number;
+    date: Date;
+    topic?: string | null;
+    notes?: string | null;
+  }): Promise<ClassSession> {
+    const [created] = await db
+      .insert(classSessions)
       .values({
-        ...intention,
-        updatedAt: new Date(),
+        classId: session.classId,
+        date: session.date,
+        topic: session.topic ?? null,
+        notes: session.notes ?? null,
       })
       .returning();
-    return newIntention;
+    return created;
   }
 
-  async getEngagementIntention(
-    studentId: number,
-    classId: number,
-    weekNumber: number
-  ): Promise<EngagementIntention | undefined> {
-    const [intention] = await db
+  async getClassSessions(classId: number): Promise<ClassSession[]> {
+    return db
       .select()
-      .from(engagementIntentions)
-      .where(
-        and(
-          eq(engagementIntentions.studentId, studentId),
-          eq(engagementIntentions.classId, classId),
-          eq(engagementIntentions.weekNumber, weekNumber)
-        )
-      );
-    return intention;
+      .from(classSessions)
+      .where(eq(classSessions.classId, classId))
+      .orderBy(desc(classSessions.date));
   }
 
-  async getEngagementIntentionById(id: number): Promise<EngagementIntention | undefined> {
-    const [intention] = await db
+  async getClassSession(sessionId: number): Promise<ClassSession | undefined> {
+    const [session] = await db
       .select()
-      .from(engagementIntentions)
-      .where(eq(engagementIntentions.id, id));
-    return intention;
+      .from(classSessions)
+      .where(eq(classSessions.id, sessionId));
+    return session;
   }
 
-  async updateEngagementIntention(
-    id: number,
-    updates: UpdateEngagementIntention
-  ): Promise<EngagementIntention> {
-    const [updatedIntention] = await db
-      .update(engagementIntentions)
-      .set({
-        ...updates,
-        updatedAt: new Date(),
-      })
-      .where(eq(engagementIntentions.id, id))
+  async updateClassSession(
+    sessionId: number,
+    updates: { date?: Date; topic?: string | null; notes?: string | null }
+  ): Promise<ClassSession> {
+    const [updated] = await db
+      .update(classSessions)
+      .set(updates)
+      .where(eq(classSessions.id, sessionId))
       .returning();
-    return updatedIntention;
+    return updated;
   }
 
-  async getStudentEngagementIntentions(
+  async deleteClassSession(sessionId: number): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx.delete(sessionParticipation).where(eq(sessionParticipation.sessionId, sessionId));
+      await tx.delete(classSessions).where(eq(classSessions.id, sessionId));
+    });
+  }
+
+  async getSessionParticipation(sessionId: number): Promise<SessionParticipation[]> {
+    return db
+      .select()
+      .from(sessionParticipation)
+      .where(eq(sessionParticipation.sessionId, sessionId));
+  }
+
+  /**
+   * Record participation for a whole session in one statement.
+   *
+   * The unique constraint on (session_id, student_id) makes this a real upsert
+   * rather than a query-per-student loop.
+   */
+  async recordSessionParticipation(
+    sessionId: number,
+    entries: ParticipationEntry[]
+  ): Promise<void> {
+    if (entries.length === 0) return;
+
+    await db
+      .insert(sessionParticipation)
+      .values(
+        entries.map((entry) => ({
+          sessionId,
+          studentId: entry.studentId,
+          participation: entry.participation ?? null,
+          notes: entry.notes ?? null,
+        }))
+      )
+      .onConflictDoUpdate({
+        target: [sessionParticipation.sessionId, sessionParticipation.studentId],
+        set: {
+          participation: sql`excluded.participation`,
+          notes: sql`excluded.notes`,
+        },
+      });
+  }
+
+  async getClassParticipation(classId: number): Promise<SessionParticipation[]> {
+    const rows = await db
+      .select({ record: sessionParticipation })
+      .from(sessionParticipation)
+      .innerJoin(classSessions, eq(sessionParticipation.sessionId, classSessions.id))
+      .where(eq(classSessions.classId, classId))
+      .orderBy(desc(classSessions.date));
+    return rows.map((row) => row.record);
+  }
+
+  async getStudentParticipation(
     studentId: number,
     classId: number
-  ): Promise<EngagementIntention[]> {
-    return db
-      .select()
-      .from(engagementIntentions)
+  ): Promise<SessionParticipation[]> {
+    const rows = await db
+      .select({ record: sessionParticipation })
+      .from(sessionParticipation)
+      .innerJoin(classSessions, eq(sessionParticipation.sessionId, classSessions.id))
       .where(
         and(
-          eq(engagementIntentions.studentId, studentId),
-          eq(engagementIntentions.classId, classId)
+          eq(sessionParticipation.studentId, studentId),
+          eq(classSessions.classId, classId)
         )
       )
-      .orderBy(engagementIntentions.weekNumber);
+      .orderBy(desc(classSessions.date));
+    return rows.map((row) => row.record);
   }
 
-  async getClassEngagementIntentions(classId: number): Promise<EngagementIntention[]> {
-    return db
+  // ==========================================================================
+  // Absence totals imported from Qwickly by way of Canvas
+  // ==========================================================================
+
+  async getClassAbsences(classId: number): Promise<StudentAbsences[]> {
+    return db.select().from(studentAbsences).where(eq(studentAbsences.classId, classId));
+  }
+
+  async getStudentAbsences(
+    studentId: number,
+    classId: number
+  ): Promise<StudentAbsences | undefined> {
+    const [row] = await db
       .select()
-      .from(engagementIntentions)
-      .where(eq(engagementIntentions.classId, classId))
-      .orderBy(engagementIntentions.weekNumber, engagementIntentions.studentId);
+      .from(studentAbsences)
+      .where(
+        and(
+          eq(studentAbsences.studentId, studentId),
+          eq(studentAbsences.classId, classId)
+        )
+      );
+    return row;
   }
 
-  async getCurrentWeekEngagementIntentions(
+  async setStudentAbsences(
+    studentId: number,
     classId: number,
-    weekNumber: number
-  ): Promise<EngagementIntention[]> {
-    return db
-      .select()
-      .from(engagementIntentions)
-      .where(
-        and(
-          eq(engagementIntentions.classId, classId),
-          eq(engagementIntentions.weekNumber, weekNumber)
-        )
-      );
-  }
-
-  // Attendance tracking methods
-  async getStudentAttendance(studentId: number, classId: number): Promise<AttendanceRecord[]> {
-    return db
-      .select()
-      .from(attendanceRecords)
-      .where(
-        and(
-          eq(attendanceRecords.studentId, studentId),
-          eq(attendanceRecords.classId, classId)
-        )
-      )
-      .orderBy(attendanceRecords.date);
-  }
-
-  async getAllClassAttendance(classId: number): Promise<AttendanceRecord[]> {
-    return db
-      .select()
-      .from(attendanceRecords)
-      .where(eq(attendanceRecords.classId, classId))
-      .orderBy(attendanceRecords.date);
-  }
-
-  async setStudentAbsences(studentId: number, classId: number, absences: number): Promise<void> {
-    // Delete all existing attendance records for this student in this class
-    await db
-      .delete(attendanceRecords)
-      .where(
-        and(
-          eq(attendanceRecords.studentId, studentId),
-          eq(attendanceRecords.classId, classId)
-        )
-      );
-
-    // Create absence records (one per absence)
-    if (absences > 0) {
-      const records = [];
-      for (let i = 0; i < absences; i++) {
-        records.push({
-          studentId,
-          classId,
-          date: new Date(Date.now() - i * 24 * 60 * 60 * 1000), // Stagger dates backwards
-          isPresent: false,
-          notes: "Manual absence count",
-        });
-      }
-      await db.insert(attendanceRecords).values(records);
-    }
-  }
-
-  async getAttendanceRecord(attendanceId: number): Promise<AttendanceRecord | undefined> {
-    const result = await db
-      .select()
-      .from(attendanceRecords)
-      .where(eq(attendanceRecords.id, attendanceId))
-      .limit(1);
-    return result[0];
-  }
-
-  async createAttendanceRecord(attendance: InsertAttendanceRecord): Promise<AttendanceRecord> {
-    const [created] = await db
-      .insert(attendanceRecords)
-      .values(attendance)
-      .returning();
-    return created;
-  }
-
-  async updateAttendanceRecord(attendanceId: number, updates: UpdateAttendanceRecord): Promise<AttendanceRecord> {
-    const [updated] = await db
-      .update(attendanceRecords)
-      .set(updates)
-      .where(eq(attendanceRecords.id, attendanceId))
-      .returning();
-    return updated;
-  }
-
-  // Instructor dashboard attendance methods
-  async getAttendanceForClass(classId: number): Promise<AttendanceRecord[]> {
-    return db
-      .select()
-      .from(attendanceRecords)
-      .where(eq(attendanceRecords.classId, classId))
-      .orderBy(attendanceRecords.date);
-  }
-
-  async getAttendanceForStudentInClass(studentId: number, classId: number): Promise<AttendanceRecord[]> {
-    return db
-      .select()
-      .from(attendanceRecords)
-      .where(
-        and(
-          eq(attendanceRecords.studentId, studentId),
-          eq(attendanceRecords.classId, classId)
-        )
-      )
-      .orderBy(attendanceRecords.date);
-  }
-
-  async getClassAttendanceByDate(classId: number, date: string): Promise<AttendanceRecord[]> {
-    return db
-      .select()
-      .from(attendanceRecords)
-      .where(
-        and(
-          eq(attendanceRecords.classId, classId),
-          sql`${attendanceRecords.date}::date = ${date}::date`
-        )
-      );
-  }
-
-  async batchUpsertAttendance(records: { studentId: number; classId: number; date: string; isPresent: boolean; notes?: string }[]): Promise<void> {
-    if (records.length === 0) return;
-
-    // Process each record - upsert based on studentId + classId + date
-    for (const record of records) {
-      const dateObj = new Date(record.date);
-
-      // Check if record exists
-      const existing = await db
-        .select()
-        .from(attendanceRecords)
-        .where(
-          and(
-            eq(attendanceRecords.studentId, record.studentId),
-            eq(attendanceRecords.classId, record.classId),
-            sql`${attendanceRecords.date}::date = ${record.date}::date`
-          )
-        )
-        .limit(1);
-
-      if (existing.length > 0) {
-        // Update existing
-        await db
-          .update(attendanceRecords)
-          .set({
-            isPresent: record.isPresent,
-            notes: record.notes || null,
-          })
-          .where(eq(attendanceRecords.id, existing[0].id));
-      } else {
-        // Insert new
-        await db
-          .insert(attendanceRecords)
-          .values({
-            studentId: record.studentId,
-            classId: record.classId,
-            date: dateObj,
-            isPresent: record.isPresent,
-            notes: record.notes || null,
-          });
-      }
-    }
-  }
-
-  async updateStudentAttendance(studentId: number, classId: number, date: Date, isPresent: boolean): Promise<AttendanceRecord> {
-    const [updated] = await db
-      .update(attendanceRecords)
-      .set({ isPresent })
-      .where(
-        and(
-          eq(attendanceRecords.studentId, studentId),
-          eq(attendanceRecords.classId, classId),
-          sql`${attendanceRecords.date}::date = ${date}::date`
-        )
-      )
-      .returning();
-    return updated;
-  }
-
-  async createStudentAttendance(studentId: number, classId: number, date: Date, isPresent: boolean): Promise<AttendanceRecord> {
-    const [created] = await db
-      .insert(attendanceRecords)
-      .values({
-        studentId,
-        classId,
-        date,
-        isPresent,
+    absences: number,
+    source: string = "canvas"
+  ): Promise<StudentAbsences> {
+    const [row] = await db
+      .insert(studentAbsences)
+      .values({ studentId, classId, absences: absences.toString(), source })
+      .onConflictDoUpdate({
+        target: [studentAbsences.studentId, studentAbsences.classId],
+        set: {
+          absences: sql`excluded.absences`,
+          source: sql`excluded.source`,
+          updatedAt: new Date(),
+        },
       })
       .returning();
-    return created;
+    return row;
   }
 
   async cloneClass(classId: number, instructorId: number): Promise<Class> {
@@ -1010,7 +998,7 @@ export class DatabaseStorage implements IStorage {
         grade: contract.grade,
         version: contract.version,
         assignments: remappedAssignments,
-        requiredEngagementIntentions: contract.requiredEngagementIntentions,
+        requiredParticipationSessions: contract.requiredParticipationSessions,
         maxAbsences: contract.maxAbsences,
         categoryRequirements: contract.categoryRequirements,
       });

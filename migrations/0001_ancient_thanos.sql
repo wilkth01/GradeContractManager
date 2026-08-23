@@ -1,0 +1,1 @@
+DROP TABLE "engagement_intentions" CASCADE;

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useParams, useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Class, Assignment, User, AssignmentProgress, StudentContract, GradeContract } from "@shared/schema";
+import { Class, Assignment, User, StudentContract, GradeContract } from "@shared/schema";
 import { AssignmentStatus, getAssignmentStatusLabel } from "@shared/constants";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,26 +20,31 @@ import { ArrowLeft, Users, TrendingUp, TrendingDown, CheckCircle, AlertTriangle,
 interface ClassAnalytics {
   classInfo: Class;
   totalStudents: number;
-  overallCompletionRate: number;
+  studentsWithContract: number;
   atRiskStudents: number;
-  highPerformers: number;
+  meetingContract: number;
+  noContractSelected: number;
+  underAbsencePenalty: number;
   assignmentStats: {
     assignment: Assignment;
     completionRate: number;
     statusBreakdown: {
-      notStarted: number;
-      inProgress: number;
-      completed: number;
-      excellent: number;
+      missing: number;
+      workInProgress: number;
+      complete: number;
     };
   }[];
   studentPerformance: {
     student: User;
     contract: StudentContract | null;
-    progressScore: number;
+    contractGrade: string | null;
+    meetingContract: boolean;
+    highestMet: string | null;
+    effectiveGrade: string | null;
+    penalty: "none" | "letter-reduction" | "failure";
+    outstanding: string[];
     completedAssignments: number;
     totalAssignments: number;
-    lastActivity: string;
   }[];
   contractDistribution: {
     gradeLevel: string;
@@ -84,10 +89,9 @@ export default function ClassAnalytics() {
 
   const getStatusColor = (status: number): string => {
     switch (status) {
-      case AssignmentStatus.EXCELLENT: return "bg-green-200 text-green-800";
-      case AssignmentStatus.COMPLETED: return "bg-yellow-200 text-yellow-800";
-      case AssignmentStatus.NOT_STARTED:
-      case AssignmentStatus.IN_PROGRESS:
+      case AssignmentStatus.COMPLETE: return "bg-green-200 text-green-800";
+      case AssignmentStatus.WORK_IN_PROGRESS: return "bg-yellow-200 text-yellow-800";
+      case AssignmentStatus.MISSING:
       default: return "bg-slate-200 text-slate-700";
     }
   };
@@ -136,34 +140,45 @@ export default function ClassAnalytics() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Overall Completion</CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Meeting Contract</CardTitle>
+                <CheckCircle className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{analyticsData.overallCompletionRate}%</div>
-                <Progress value={analyticsData.overallCompletionRate} className="mt-2" />
+                <div className="text-2xl font-bold text-green-600">
+                  {analyticsData.meetingContract}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  of {analyticsData.studentsWithContract} with a contract
+                </p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">At-Risk Students</CardTitle>
+                <CardTitle className="text-sm font-medium">Not Yet Meeting</CardTitle>
                 <AlertTriangle className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-red-600">{analyticsData.atRiskStudents}</div>
-                <p className="text-xs text-muted-foreground">Below 60% completion</p>
+                <p className="text-xs text-muted-foreground">
+                  Short of the contract they chose
+                </p>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">High Performers</CardTitle>
-                <CheckCircle className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Needs Attention</CardTitle>
+                <Clock className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">{analyticsData.highPerformers}</div>
-                <p className="text-xs text-muted-foreground">Above 90% completion</p>
+                <div className="text-2xl font-bold">
+                  {analyticsData.noContractSelected + analyticsData.underAbsencePenalty}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {analyticsData.noContractSelected} no contract,{" "}
+                  {analyticsData.underAbsencePenalty} over absence limit
+                </p>
               </CardContent>
             </Card>
           </div>
@@ -198,15 +213,15 @@ export default function ClassAnalytics() {
                       
                       <div className="grid grid-cols-3 gap-4">
                         <div className="text-center p-3 bg-slate-100 rounded-lg">
-                          <div className="text-2xl font-bold text-slate-700">{stat.statusBreakdown.notStarted + stat.statusBreakdown.inProgress}</div>
+                          <div className="text-2xl font-bold text-slate-700">{stat.statusBreakdown.missing}</div>
                           <div className="text-sm text-muted-foreground">Not Submitted</div>
                         </div>
                         <div className="text-center p-3 bg-yellow-100 rounded-lg">
-                          <div className="text-2xl font-bold text-yellow-700">{stat.statusBreakdown.completed}</div>
+                          <div className="text-2xl font-bold text-yellow-700">{stat.statusBreakdown.workInProgress}</div>
                           <div className="text-sm text-muted-foreground">Work-in-Progress</div>
                         </div>
                         <div className="text-center p-3 bg-green-100 rounded-lg">
-                          <div className="text-2xl font-bold text-green-700">{stat.statusBreakdown.excellent}</div>
+                          <div className="text-2xl font-bold text-green-700">{stat.statusBreakdown.complete}</div>
                           <div className="text-sm text-muted-foreground">Successfully Completed</div>
                         </div>
                       </div>
@@ -243,24 +258,51 @@ export default function ClassAnalytics() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-2xl font-bold">{performance.progressScore}%</div>
+                        <div className="text-2xl font-bold">
+                          {performance.effectiveGrade ?? "\u2014"}
+                        </div>
                         <div className="text-sm text-muted-foreground">
-                          {performance.completedAssignments}/{performance.totalAssignments} completed
+                          currently earning
                         </div>
                       </div>
                     </div>
-                    
+
                     <div className="space-y-2">
-                      <Progress value={performance.progressScore} className="h-2" />
-                      <div className="flex justify-between text-sm text-muted-foreground">
-                        <span>Last activity: {performance.lastActivity}</span>
-                        {performance.progressScore < 60 && (
-                          <Badge variant="destructive" className="text-xs">At Risk</Badge>
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                        {performance.contractGrade ? (
+                          <Badge
+                            variant={performance.meetingContract ? "default" : "destructive"}
+                            className={
+                              performance.meetingContract ? "text-xs bg-green-600" : "text-xs"
+                            }
+                          >
+                            {performance.meetingContract
+                              ? `Meeting Grade ${performance.contractGrade}`
+                              : `Short of Grade ${performance.contractGrade}`}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs">
+                            No contract chosen
+                          </Badge>
                         )}
-                        {performance.progressScore >= 90 && (
-                          <Badge variant="default" className="text-xs bg-green-600">High Performer</Badge>
+                        {performance.penalty !== "none" && (
+                          <Badge variant="destructive" className="text-xs">
+                            {performance.penalty === "failure"
+                              ? "Absences: automatic failure"
+                              : "Absences: one letter reduction"}
+                          </Badge>
                         )}
+                        <span className="text-muted-foreground">
+                          {performance.completedAssignments}/{performance.totalAssignments}{" "}
+                          assignments complete
+                        </span>
                       </div>
+
+                      {performance.outstanding.length > 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          Outstanding: {performance.outstanding.join("; ")}.
+                        </p>
+                      )}
                     </div>
                   </CardContent>
                 </Card>

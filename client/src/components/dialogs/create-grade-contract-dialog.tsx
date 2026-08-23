@@ -2,10 +2,15 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import {
+  MAX_NUMERIC_GRADE,
+  DEFAULT_PARTICIPATION_BAR,
+  getParticipationLabel,
+} from "@shared/constants";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Assignment } from "@shared/schema";
+import { Assignment, CategoryRequirement } from "@shared/schema";
 import {
   Dialog,
   DialogContent,
@@ -42,17 +47,16 @@ const createGradeContractSchema = z.object({
     comments: z.string().optional(),
     minPoints: z.number().min(0).optional(),
   })),
-  requiredEngagementIntentions: z.number().default(0),
+  requiredParticipationSessions: z.number().default(0),
   maxAbsences: z.number().default(0),
   categoryRequirements: z.array(z.object({
     category: z.string(),
-    required: z.number().min(1),
-    minAverage: z.number().min(0).max(4).optional(),
+    required: z.number().min(0).optional(),
+    minAverage: z.number().min(0).max(MAX_NUMERIC_GRADE).optional(),
   })).optional(),
 });
 
 type FormData = z.infer<typeof createGradeContractSchema>;
-type CategoryRequirement = { category: string; required: number; minAverage?: number };
 type AssignmentMinPoints = Record<number, number | undefined>;
 
 export function CreateGradeContractDialog({
@@ -75,7 +79,7 @@ export function CreateGradeContractDialog({
     defaultValues: {
       grade: "A",
       assignments: [],
-      requiredEngagementIntentions: 0,
+      requiredParticipationSessions: 0,
       maxAbsences: 0,
       categoryRequirements: [],
     },
@@ -142,12 +146,12 @@ export function CreateGradeContractDialog({
 
     // Build category requirements array from state
     const categoryReqs: CategoryRequirement[] = Object.entries(categoryRequirements)
-      .filter(([_, required]) => required !== null && required > 0)
+      .filter(([category, required]) => (required ?? 0) > 0 || (categoryMinAverages[category] ?? 0) > 0)
       .map(([category, required]) => {
         const minAvg = categoryMinAverages[category];
         return {
           category,
-          required: required as number,
+          ...((required ?? 0) > 0 ? { required: required as number } : {}),
           ...(minAvg != null && minAvg > 0 ? { minAverage: minAvg } : {}),
         };
       });
@@ -205,10 +209,10 @@ export function CreateGradeContractDialog({
 
               <FormField
                 control={form.control}
-                name="requiredEngagementIntentions"
+                name="requiredParticipationSessions"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Required Engagement Intentions</FormLabel>
+                    <FormLabel>Required Participation Sessions</FormLabel>
                     <FormControl>
                       <Input
                         type="number"
@@ -220,7 +224,8 @@ export function CreateGradeContractDialog({
                     </FormControl>
                     <FormMessage />
                     <p className="text-sm text-muted-foreground">
-                      Number of engagement intentions students must fulfill for this grade. Set to 0 if not required.
+                      Number of class sessions in which the student must participate at
+                      "{getParticipationLabel(DEFAULT_PARTICIPATION_BAR)}" or above. Set to 0 if not required.
                     </p>
                   </FormItem>
                 )}
