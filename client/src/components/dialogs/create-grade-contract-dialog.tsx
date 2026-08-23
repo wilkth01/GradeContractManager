@@ -284,7 +284,7 @@ export function CreateGradeContractDialog({
                           <div className="flex items-center gap-2">
                             <p className="text-sm font-medium leading-none">{assignment.name}</p>
                             {assignment.scoringType === "numeric" && (
-                              <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Points</span>
+                              <span className="text-xs pill-info px-1.5 py-0.5 rounded">Points</span>
                             )}
                           </div>
                           {selectedAssignments.includes(assignment.id) && (

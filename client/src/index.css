@@ -349,6 +349,61 @@
   .img-container:hover img {
     @apply scale-105;
   }
+
+  /* Status colors that survive dark mode.
+     Tailwind's bare -100/-700 pairs are light-mode only: on a dark page they
+     render as glaring light chips, and a bare gray track disappears entirely. */
+  .bar-track {
+    @apply bg-muted;
+  }
+
+  .pill-neutral {
+    @apply bg-muted text-muted-foreground;
+  }
+
+  .pill-ok {
+    @apply bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300;
+  }
+
+  .pill-warn {
+    @apply bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300;
+  }
+
+  .pill-info {
+    @apply bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300;
+  }
+
+  .pill-bad {
+    @apply bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300;
+  }
+
+  .surface-ok {
+    @apply bg-green-50 border-green-200 text-green-800 dark:bg-green-950/50 dark:border-green-900 dark:text-green-300;
+  }
+
+  .surface-warn {
+    @apply bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/50 dark:border-amber-900 dark:text-amber-300;
+  }
+
+  .surface-neutral {
+    @apply bg-muted border-border text-muted-foreground;
+  }
+
+  .text-ok {
+    @apply text-green-700 dark:text-green-400;
+  }
+
+  .text-warn {
+    @apply text-amber-700 dark:text-amber-400;
+  }
+
+  .text-bad {
+    @apply text-red-600 dark:text-red-400;
+  }
+
+  .text-brand {
+    @apply text-[#0072BC] dark:text-sky-400;
+  }
 }
 
 @layer utilities {

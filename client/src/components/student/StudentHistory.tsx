@@ -44,11 +44,11 @@ const entityLabels: Record<string, string> = {
 };
 
 const actionColors: Record<string, string> = {
-  CREATE: "bg-green-100 text-green-800",
-  UPDATE: "bg-blue-100 text-blue-800",
-  DELETE: "bg-red-100 text-red-800",
+  CREATE: "pill-ok",
+  UPDATE: "pill-info",
+  DELETE: "pill-bad",
   CONFIRM: "bg-purple-100 text-purple-800",
-  ENROLL: "bg-yellow-100 text-yellow-800",
+  ENROLL: "pill-warn",
 };
 
 function formatChange(
@@ -157,7 +157,7 @@ export function StudentHistory({ classId, studentId }: StudentHistoryProps) {
               >
                 <Badge
                   variant="secondary"
-                  className={actionColors[log.action] || "bg-gray-100"}
+                  className={actionColors[log.action] || "pill-neutral"}
                 >
                   {actionLabels[log.action] || log.action}
                 </Badge>

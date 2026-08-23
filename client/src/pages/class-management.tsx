@@ -11,6 +11,7 @@ import {
   meetsParticipationBar,
   getParticipationLabel,
   DEFAULT_PARTICIPATION_BAR,
+  MAX_NUMERIC_GRADE,
 } from "@shared/constants";
 import { computeCategoryAverage, evaluateStanding } from "@shared/contract-evaluation";
 import { Button } from "@/components/ui/button";
@@ -40,7 +41,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, CheckCircle2, XCircle, Circle, Edit2, ArrowLeft, TrendingUp, Settings, Search } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, Circle, Edit2, ArrowLeft, TrendingUp, Settings, Search, ChevronDown, ChevronRight } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -294,6 +295,16 @@ export default function ClassManagement() {
   const [description, setDescription] = useState<string>("");
   const [isInviteStudentsOpen, setIsInviteStudentsOpen] = useState(false);
   const [studentSearch, setStudentSearch] = useState("");
+  // Roster cards start collapsed. A 28-assignment contract across 18 students
+  // renders ~500 rows otherwise, which buries the summary the roster exists for.
+  const [expandedStudents, setExpandedStudents] = useState<Set<number>>(new Set());
+  const toggleStudentExpanded = (studentId: number) =>
+    setExpandedStudents(prev => {
+      const next = new Set(prev);
+      if (next.has(studentId)) next.delete(studentId);
+      else next.add(studentId);
+      return next;
+    });
   const [contractFilter, setContractFilter] = useState<string>("all");
   const { user } = useAuth();
   const params = useParams<{ classId: string }>();
@@ -452,15 +463,64 @@ export default function ClassManagement() {
     }
   };
 
-  const getAssignmentDetails = (assignmentRequirements: { id: number; comments?: string }[]) => {
-    return assignmentRequirements
-      .map(req => {
-        const assignment = assignments?.find(a => a.id === req.id);
-        if (!assignment) return null;
-        return `${assignment.name}${req.comments ? ` (${req.comments})` : ''}`;
-      })
-      .filter(Boolean)
-      .join("\n");
+  // The one-line bargain: what a student trades for this grade, beyond the
+  // assignment list. The card previously showed only assignment names, so the
+  // absence limit and the category averages -- the terms most likely to be
+  // edited mid-semester -- were invisible without opening the edit dialog.
+  const contractSummaryLine = (contract: GradeContract) => {
+    const parts: string[] = [];
+    const named = contract.assignments?.length ?? 0;
+    if (named > 0) {
+      parts.push(`${named} assignment${named === 1 ? "" : "s"} named`);
+    }
+    const maxAbsences = contract.maxAbsences ?? 0;
+    parts.push(
+      maxAbsences === 0
+        ? "no absences allowed"
+        : `up to ${maxAbsences} absence${maxAbsences === 1 ? "" : "s"}`
+    );
+    const sessions = contract.requiredParticipationSessions ?? 0;
+    if (sessions > 0) {
+      parts.push(
+        `${sessions} session${sessions === 1 ? "" : "s"} at ${getParticipationLabel(
+          classData?.participationBar ?? DEFAULT_PARTICIPATION_BAR
+        )} or above`
+      );
+    }
+    return parts.join(" \u00b7 ");
+  };
+
+  // Per module group: which assignments the contract names, and the rule that
+  // applies to them -- all of them, N of them, an average, or both.
+  const contractRequirementGroups = (contract: GradeContract) => {
+    const groups = new Map<string, { id: number; label: string }[]>();
+    for (const req of contract.assignments ?? []) {
+      const assignment = assignments?.find(a => a.id === req.id);
+      if (!assignment) continue;
+      const groupName = assignment.moduleGroup || "Ungrouped";
+      const suffix = [
+        req.comments,
+        req.minPoints != null ? `min ${req.minPoints}` : null,
+      ].filter(Boolean).join(", ");
+      if (!groups.has(groupName)) groups.set(groupName, []);
+      groups.get(groupName)!.push({
+        id: assignment.id,
+        label: suffix ? `${assignment.name} (${suffix})` : assignment.name,
+      });
+    }
+    return Array.from(groups.entries()).map(([name, items]) => {
+      const categoryReq = contract.categoryRequirements?.find(cr => cr.category === name);
+      const rules: string[] = [];
+      rules.push(
+        categoryReq?.required != null
+          ? `${categoryReq.required} of ${items.length}`
+          : `all ${items.length}`
+      );
+      if (categoryReq?.minAverage != null) {
+        rules.push(`avg ${categoryReq.minAverage}`);
+      }
+      return { name, items, rule: rules.join(", ") };
+    });
   };
 
   // Group assignments by module
@@ -519,6 +579,562 @@ export default function ClassManagement() {
 
       <main id="main-content" className="container mx-auto py-8" role="main">
         {/* Add description editor card at the top */}
+        <Tabs defaultValue="roster" className="space-y-6">
+          <TabsList>
+            <TabsTrigger value="contracts">Grade Contracts</TabsTrigger>
+            <TabsTrigger value="assignments">Assignments</TabsTrigger>
+            <TabsTrigger value="roster">Student Progress</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="contracts">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>Grade Contracts</CardTitle>
+                  <CardDescription>
+                    Define requirements for each grade level (A, B, C)
+                  </CardDescription>
+                </div>
+                {assignments && assignments.length > 0 ? (
+                  <CreateGradeContractDialog
+                    classId={parsedClassId}
+                    assignments={assignments}
+                  />
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Add assignments before creating grade contracts
+                  </p>
+                )}
+              </CardHeader>
+              <CardContent>
+                {contracts?.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">
+                    No grade contracts defined yet. Click "Create Grade Contract" to define requirements for each grade level.
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {["A", "B", "C"].map((grade) => {
+                      const gradeContract = contracts?.find((c) => c.grade === grade);
+                      return (
+                        <Card key={grade}>
+                          <CardHeader>
+                            <div className="flex justify-between items-start">
+                              <div className="space-y-1">
+                                <CardTitle className="text-lg">Grade {grade} Requirements</CardTitle>
+                                {gradeContract ? (
+                                  <CardDescription>
+                                    {contractSummaryLine(gradeContract)}
+                                  </CardDescription>
+                                ) : (
+                                  <CardDescription className="text-muted-foreground">
+                                    No requirements defined yet
+                                  </CardDescription>
+                                )}
+                              </div>
+                              {gradeContract && assignments && (
+                                <EditGradeContractDialog
+                                  classId={parsedClassId}
+                                  contract={gradeContract}
+                                  assignments={assignments}
+                                />
+                              )}
+                            </div>
+                          </CardHeader>
+                          {gradeContract && (
+                            <CardContent className="pt-0">
+                              {contractRequirementGroups(gradeContract).length === 0 ? (
+                                <p className="text-sm text-muted-foreground">
+                                  No assignments are named in this contract.
+                                </p>
+                              ) : (
+                                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                  {contractRequirementGroups(gradeContract).map((group) => (
+                                    <div key={group.name} className="border-l-2 border-border pl-3">
+                                      <div className="flex items-baseline justify-between gap-2 mb-1">
+                                        <span className="font-medium text-sm text-brand">
+                                          {group.name}
+                                        </span>
+                                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                          {group.rule}
+                                        </span>
+                                      </div>
+                                      <ul className="text-sm text-muted-foreground space-y-0.5">
+                                        {group.items.map((item) => (
+                                          <li key={item.id}>{item.label}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </CardContent>
+                          )}
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="assignments">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>Assignments</CardTitle>
+                  <CardDescription>
+                    Create and manage assignments for your class
+                  </CardDescription>
+                </div>
+                <div className="flex gap-2">
+                  {assignments && assignments.length > 1 && (
+                    <ReorderAssignmentsDialog classId={parsedClassId} assignments={assignments} />
+                  )}
+                  <CreateAssignmentDialog classId={parsedClassId} />
+                </div>
+              </CardHeader>
+              <CardContent>
+                {assignments?.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">
+                    No assignments yet. Click "Add Assignment" to create your first assignment.
+                  </p>
+                ) : (
+                  <div className="space-y-6">
+                    {Object.entries(groupedAssignments || {}).map(([group, groupAssignments]) => (
+                      <div key={group}>
+                        <h3 className="text-lg font-semibold mb-3">{group}</h3>
+                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                          {groupAssignments.map((assignment) => (
+                            <Card key={assignment.id}>
+                              <CardHeader className="flex flex-row items-start justify-between">
+                                <div>
+                                  <CardTitle className="text-base">{assignment.name}</CardTitle>
+                                  <CardDescription className="text-xs">
+                                    Scoring: {assignment.scoringType === "status" ? "Successfully Completed / Work-in-Progress / Missing" : `Numeric (0-${MAX_NUMERIC_GRADE})`}
+                                  </CardDescription>
+                                </div>
+                                <EditAssignmentDialog
+                                  assignment={assignment}
+                                  classId={parsedClassId}
+                                />
+                              </CardHeader>
+                            </Card>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="roster">
+            <Card>
+              <CardHeader className="space-y-4">
+                <div className="flex flex-row items-center justify-between gap-4">
+                  <div>
+                    <CardTitle>Student Progress</CardTitle>
+                    <CardDescription>
+                      Track student contracts and assignment completion
+                    </CardDescription>
+                  </div>
+                  {students && students.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="whitespace-nowrap"
+                      onClick={() =>
+                        setExpandedStudents(prev =>
+                          prev.size > 0 ? new Set() : new Set(students.map(st => st.id))
+                        )
+                      }
+                    >
+                      {expandedStudents.size > 0 ? "Collapse all" : "Expand all"}
+                    </Button>
+                  )}
+                </div>
+                {/* Actions get their own row: six of them wrapped into a ragged
+                    two-line block when squeezed beside the title. */}
+                <div className="flex flex-wrap gap-2 border-t pt-4">
+                  <Button
+                    onClick={() => setIsInviteStudentsOpen(true)}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    Invite Students
+                  </Button>
+                  <ImportStudentsDialog classId={parsedClassId} />
+                  <ManageAttendanceDialog classId={parsedClassId} />
+                  <div className="hidden sm:block w-px bg-border mx-1" aria-hidden="true" />
+                  <CanvasSettingsDialog classId={parsedClassId} />
+                  <CanvasGradesDialog classId={parsedClassId} />
+                  <SendContractUpdatesDialog classId={parsedClassId} />
+                </div>
+              </CardHeader>
+              <CardContent>
+                {!students?.length ? (
+                  <p className="text-center text-muted-foreground py-8">
+                    No students enrolled yet. Click "Import Students" to add students to this class.
+                  </p>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Search and Filter Controls */}
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search students by name..."
+                          value={studentSearch}
+                          onChange={(e) => setStudentSearch(e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+                      <Select value={contractFilter} onValueChange={setContractFilter}>
+                        <SelectTrigger className="w-full sm:w-[200px]">
+                          <SelectValue placeholder="Filter by contract" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Students</SelectItem>
+                          <SelectItem value="none">No Contract Selected</SelectItem>
+                          {contracts?.map((contract) => (
+                            <SelectItem key={contract.id} value={contract.grade}>
+                              Grade {contract.grade} Contract
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Student List */}
+                    {(() => {
+                      // Extract last name - handles "LastName, FirstName" or "FirstName LastName" formats
+                      const getLastName = (fullName: string) => {
+                        if (fullName.includes(',')) {
+                          // "Grossman, Abigail" -> "Grossman"
+                          return fullName.split(',')[0].trim().toLowerCase();
+                        }
+                        // "Abigail Grossman" -> "Grossman"
+                        return fullName.split(' ').slice(-1)[0].toLowerCase();
+                      };
+
+                      const filteredStudents = [...students]
+                        .sort((a, b) => {
+                          const byLast = getLastName(a.fullName).localeCompare(getLastName(b.fullName));
+                          // Two students can share a surname; fall back to the
+                          // whole name so the order is stable between renders.
+                          return byLast !== 0 ? byLast : a.fullName.localeCompare(b.fullName);
+                        })
+                        .filter((student) => {
+                          const searchLower = studentSearch.toLowerCase();
+                          const matchesSearch = studentSearch === "" ||
+                            student.fullName.toLowerCase().includes(searchLower) ||
+                            student.username.toLowerCase().includes(searchLower);
+                          const studentContract = getStudentContract(student.id);
+                          let matchesContract = true;
+                          if (contractFilter === "none") {
+                            matchesContract = !studentContract;
+                          } else if (contractFilter !== "all") {
+                            matchesContract = studentContract?.grade === contractFilter;
+                          }
+                          return matchesSearch && matchesContract;
+                        });
+
+                      if (filteredStudents.length === 0) {
+                        return (
+                          <p className="text-center text-muted-foreground py-8">
+                            No students match your search or filter criteria.
+                          </p>
+                        );
+                      }
+
+                      return (
+                        <>
+                          <p className="text-sm text-muted-foreground">
+                            Showing {filteredStudents.length} of {students.length} student{students.length !== 1 ? 's' : ''}
+                          </p>
+                          {filteredStudents.map((student) => {
+                            const contract = getStudentContract(student.id);
+                            const studentProgress = studentsProgress?.filter(p => p.studentId === student.id) || [];
+                            const standing = evaluateStanding({
+                              contracts: (contracts ?? []).map(c => ({
+                                id: c.id,
+                                grade: c.grade,
+                                assignments: c.assignments,
+                                categoryRequirements: c.categoryRequirements,
+                                requiredParticipationSessions: c.requiredParticipationSessions,
+                                maxAbsences: c.maxAbsences,
+                              })),
+                              chosenContractId: (studentContracts as any[] | undefined)?.find(
+                                (sc: any) => sc.studentId === student.id
+                              )?.contractId ?? null,
+                              assignments: assignments ?? [],
+                              progress: studentProgress,
+                              participationSessions: (allParticipation ?? []).filter(
+                                r => r.studentId === student.id && meetsParticipationBar(r.participation, classData.participationBar)
+                              ).length,
+                              absences: Number(
+                                (allAbsences ?? []).find(a => a.studentId === student.id)?.absences ?? 0
+                              ),
+                              policy: {
+                                absencePenaltyThreshold: classData.absencePenaltyThreshold,
+                                absenceFailureThreshold: classData.absenceFailureThreshold,
+                              },
+                            });
+                            const isExpanded = expandedStudents.has(student.id);
+                            const studentAttendance = {
+                              absences: Number(
+                                (allAbsences ?? []).find(a => a.studentId === student.id)?.absences ?? 0
+                              ),
+                              participationSessions: (allParticipation ?? []).filter(
+                                r => r.studentId === student.id && meetsParticipationBar(r.participation, classData.participationBar)
+                              ).length,
+                            };
+
+                            return (
+                              <Card key={student.id} className="relative">
+                                <CardHeader className="py-4">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div
+                                      className="flex items-center gap-2 min-w-0 cursor-pointer"
+                                      onClick={() => toggleStudentExpanded(student.id)}
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleStudentExpanded(student.id);
+                                        }}
+                                        aria-expanded={isExpanded}
+                                        aria-controls={`student-${student.id}-assignments`}
+                                        aria-label={`${isExpanded ? "Hide" : "Show"} assignments for ${student.fullName}`}
+                                        className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                      >
+                                        {isExpanded ? (
+                                          <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                                        ) : (
+                                          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                                        )}
+                                      </button>
+                                      <div className="min-w-0">
+                                        <CardTitle className="text-base">{student.fullName}</CardTitle>
+                                        <CardDescription>{student.username}</CardDescription>
+                                      </div>
+                                    </div>
+                                    <div className="space-x-2">
+                                      <ViewStudentProfileDialog
+                                        student={student}
+                                        classId={parsedClassId}
+                                      />
+                                    </div>
+                                  </div>
+                                </CardHeader>
+                                <CardContent className="pt-0 pb-4">
+                                  <div className="space-y-4">
+                                    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                                        <span className="font-medium">
+                                          {contract ? `Grade ${contract.grade} contract` : "No contract selected"}
+                                        </span>
+                                        {contract && (
+                                          <>
+                                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                              standing.chosen?.met
+                                                ? "pill-ok"
+                                                : "pill-warn"
+                                            }`}>
+                                              {standing.chosen?.met ? "Meeting contract" : "Not yet met"}
+                                            </span>
+                                            {standing.effectiveGrade && (
+                                              <span className="text-muted-foreground">
+                                                currently earning {standing.effectiveGrade}
+                                                {standing.penalty !== "none" && " (absence penalty applied)"}
+                                              </span>
+                                            )}
+                                          </>
+                                        )}
+                                      </div>
+                                      {contract && (
+                                        <div className="flex items-center gap-4 text-sm">
+                                          <div>
+                                            <span className="font-medium">Absences: </span>
+                                            <span className={
+                                              isOverAbsenceLimit(studentAttendance.absences, contract.maxAbsences)
+                                                ? "text-bad font-semibold"
+                                                : "text-muted-foreground"
+                                            }>
+                                              {studentAttendance.absences} / {contract.maxAbsences ?? 0}
+                                            </span>
+                                          </div>
+                                          {(contract.requiredParticipationSessions ?? 0) > 0 && (
+                                            <div>
+                                              <span className="font-medium">Participation: </span>
+                                              <span className={
+                                                studentAttendance.participationSessions >= (contract.requiredParticipationSessions ?? 0)
+                                                  ? "text-ok font-semibold"
+                                                  : "text-muted-foreground"
+                                              }>
+                                                {studentAttendance.participationSessions} / {contract.requiredParticipationSessions}
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {contract && (
+                                      <div>
+                                        <p className="text-sm font-medium mb-2">
+                                          Required Assignments
+                                          <span className="text-muted-foreground font-normal">
+                                            {" "}({contract.assignments?.length ?? 0})
+                                          </span>
+                                        </p>
+                                        <div className="space-y-3">
+                                          {/* Group assignments by moduleGroup */}
+                                          {(() => {
+                                            const groupedReqs = contract.assignments?.reduce((groups, req) => {
+                                              const assignment = assignments?.find(a => a.id === req.id);
+                                              if (!assignment) return groups;
+                                              const group = assignment.moduleGroup || 'Uncategorized';
+                                              if (!groups[group]) groups[group] = [];
+                                              groups[group].push({ req, assignment });
+                                              return groups;
+                                            }, {} as Record<string, { req: { id: number; comments?: string }; assignment: Assignment }[]>);
+
+                                            return Object.entries(groupedReqs || {}).map(([groupName, groupItems]) => {
+                                              // Calculate group stats for this student
+                                              const groupStats = groupItems.reduce(
+                                                (stats, { assignment }) => {
+                                                  const progress = studentProgress.find(p => p.assignmentId === assignment.id);
+                                                  const status = getAssignmentDisplayState(assignment.scoringType, progress);
+                                                  if (status === "completed") stats.completed++;
+                                                  else if (status === "in-progress") stats.inProgress++;
+                                                  else stats.notSubmitted++;
+                                                  return stats;
+                                                },
+                                                { completed: 0, inProgress: 0, notSubmitted: 0 }
+                                              );
+                                              const totalInGroup = groupItems.length;
+
+                                              // Check for minAverage requirement
+                                              const categoryReq = (contract as any).categoryRequirements?.find((cr: any) => cr.category === groupName);
+                                              const minAverage = categoryReq?.minAverage;
+                                              const averageStats = computeCategoryAverage(
+                                                groupItems.map(({ assignment }) => ({
+                                                  numericGrade: studentProgress.find(p => p.assignmentId === assignment.id)?.numericGrade,
+                                                  dueDate: assignment.dueDate,
+                                                }))
+                                              );
+                                              const groupAverage = averageStats.average;
+
+                                              return (
+                                                <div key={groupName} className="border-l-2 border-blue-200 pl-3">
+                                                  <div className="flex items-center justify-between mb-2">
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="font-medium text-sm text-brand">{groupName}</span>
+                                                      {minAverage != null && (
+                                                        <span
+                                                          className={`text-xs px-1.5 py-0.5 rounded ${
+                                                            averageStats.isEmpty
+                                                              ? "pill-neutral"
+                                                              : groupAverage >= minAverage
+                                                                ? "pill-ok"
+                                                                : "pill-warn"
+                                                          }`}
+                                                          title={
+                                                            averageStats.isEmpty
+                                                              ? "Nothing graded or past due yet"
+                                                              : `${averageStats.graded} graded, ${averageStats.missed} past due counted as 0, ${averageStats.pending} not yet due`
+                                                          }
+                                                        >
+                                                          {averageStats.isEmpty
+                                                            ? `Avg: none yet / ${minAverage} required`
+                                                            : `Avg: ${groupAverage.toFixed(1)} / ${minAverage} required`}
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                    <div className="flex items-center gap-3 text-xs">
+                                                      <span className="flex items-center gap-1">
+                                                        <CheckCircle2 className="h-3 w-3 text-green-600" />
+                                                        {groupStats.completed}
+                                                      </span>
+                                                      <span className="flex items-center gap-1">
+                                                        <Circle className="h-3 w-3 text-yellow-600" />
+                                                        {groupStats.inProgress}
+                                                      </span>
+                                                      <span className="flex items-center gap-1">
+                                                        <XCircle className="h-3 w-3 text-gray-400" />
+                                                        {groupStats.notSubmitted}
+                                                      </span>
+                                                    </div>
+                                                  </div>
+                                                  {/* Mini progress bar */}
+                                                  <div className="w-full bar-track rounded-full h-1.5 mb-2">
+                                                    <div className="flex h-1.5 rounded-full overflow-hidden">
+                                                      <div className="bg-green-600" style={{ width: `${(groupStats.completed / totalInGroup) * 100}%` }} />
+                                                      <div className="bg-yellow-500" style={{ width: `${(groupStats.inProgress / totalInGroup) * 100}%` }} />
+                                                    </div>
+                                                  </div>
+                                                  <div
+                                                    id={`student-${student.id}-assignments`}
+                                                    className={isExpanded ? "space-y-1" : "hidden"}
+                                                  >
+                                                    {groupItems.map(({ req, assignment }) => {
+                                                      const assignmentProgress = studentProgress.find(p => p.assignmentId === assignment.id);
+                                                      const status = getAssignmentDisplayState(assignment.scoringType, assignmentProgress);
+
+                                                      return (
+                                                        <div key={assignment.id} className="flex items-center justify-between">
+                                                          <div className="flex items-center space-x-2">
+                                                            {assignment.scoringType === "status" && getStatusIcon(status)}
+                                                            <span className="text-sm">
+                                                              {assignment.name}
+                                                              {req.comments && (
+                                                                <span className="text-muted-foreground ml-1">
+                                                                  ({req.comments})
+                                                                </span>
+                                                              )}
+                                                            </span>
+                                                          </div>
+                                                          <div className="flex items-center space-x-2">
+                                                            {assignmentProgress && assignment.scoringType === "numeric" && assignmentProgress.numericGrade !== null && (
+                                                              <span className="text-sm mr-2">
+                                                                Score: {parseFloat(assignmentProgress.numericGrade).toFixed(1)}
+                                                              </span>
+                                                            )}
+                                                            <UpdateAssignmentStatusDialog
+                                                              classId={parsedClassId}
+                                                              studentId={student.id}
+                                                              assignment={assignment}
+                                                              currentProgress={assignmentProgress}
+                                                            />
+                                                          </div>
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                </div>
+                                              );
+                                            });
+                                          })()}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            );
+                          })}
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+
         <section aria-labelledby="description-heading">
           <Card className="mb-8">
             <CardHeader className="flex flex-row items-center justify-between">
@@ -577,485 +1193,6 @@ export default function ClassManagement() {
           </CardContent>
           </Card>
         </section>
-
-        <Tabs defaultValue="contracts" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="contracts">Grade Contracts</TabsTrigger>
-            <TabsTrigger value="assignments">Assignments</TabsTrigger>
-            <TabsTrigger value="roster">Student Progress</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="contracts">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle>Grade Contracts</CardTitle>
-                  <CardDescription>
-                    Define requirements for each grade level (A, B, C)
-                  </CardDescription>
-                </div>
-                {assignments && assignments.length > 0 ? (
-                  <CreateGradeContractDialog
-                    classId={parsedClassId}
-                    assignments={assignments}
-                  />
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Add assignments before creating grade contracts
-                  </p>
-                )}
-              </CardHeader>
-              <CardContent>
-                {contracts?.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">
-                    No grade contracts defined yet. Click "Create Grade Contract" to define requirements for each grade level.
-                  </p>
-                ) : (
-                  <div className="space-y-4">
-                    {["A", "B", "C"].map((grade) => {
-                      const gradeContract = contracts?.find((c) => c.grade === grade);
-                      return (
-                        <Card key={grade}>
-                          <CardHeader>
-                            <div className="flex justify-between items-start">
-                              <div className="space-y-1">
-                                <CardTitle className="text-lg">Grade {grade} Requirements</CardTitle>
-                                {gradeContract ? (
-                                  <CardDescription className="whitespace-pre-line">
-                                    Required Assignments:
-                                    {"\n"}
-                                    {getAssignmentDetails(gradeContract.assignments)}
-                                  </CardDescription>
-                                ) : (
-                                  <CardDescription className="text-muted-foreground">
-                                    No requirements defined yet
-                                  </CardDescription>
-                                )}
-                              </div>
-                              {gradeContract && assignments && (
-                                <EditGradeContractDialog
-                                  classId={parsedClassId}
-                                  contract={gradeContract}
-                                  assignments={assignments}
-                                />
-                              )}
-                            </div>
-                          </CardHeader>
-                        </Card>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="assignments">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle>Assignments</CardTitle>
-                  <CardDescription>
-                    Create and manage assignments for your class
-                  </CardDescription>
-                </div>
-                <div className="flex gap-2">
-                  {assignments && assignments.length > 1 && (
-                    <ReorderAssignmentsDialog classId={parsedClassId} assignments={assignments} />
-                  )}
-                  <CreateAssignmentDialog classId={parsedClassId} />
-                </div>
-              </CardHeader>
-              <CardContent>
-                {assignments?.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">
-                    No assignments yet. Click "Add Assignment" to create your first assignment.
-                  </p>
-                ) : (
-                  <div className="space-y-6">
-                    {Object.entries(groupedAssignments || {}).map(([group, groupAssignments]) => (
-                      <div key={group}>
-                        <h3 className="text-lg font-semibold mb-3">{group}</h3>
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                          {groupAssignments.map((assignment) => (
-                            <Card key={assignment.id}>
-                              <CardHeader className="flex flex-row items-start justify-between">
-                                <div>
-                                  <CardTitle className="text-base">{assignment.name}</CardTitle>
-                                  <CardDescription className="text-xs">
-                                    Scoring: {assignment.scoringType === "status" ? "Status-based" : "Numeric (1-100)"}
-                                  </CardDescription>
-                                </div>
-                                <EditAssignmentDialog
-                                  assignment={assignment}
-                                  classId={parsedClassId}
-                                />
-                              </CardHeader>
-                            </Card>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="roster">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle>Student Progress</CardTitle>
-                  <CardDescription>
-                    Track student contracts and assignment completion
-                  </CardDescription>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    onClick={() => setIsInviteStudentsOpen(true)}
-                    className="bg-blue-600 hover:bg-blue-700"
-                  >
-                    Invite Students
-                  </Button>
-                  <ImportStudentsDialog classId={parsedClassId} />
-                  <ManageAttendanceDialog classId={parsedClassId} />
-                  <CanvasSettingsDialog classId={parsedClassId} />
-                  <CanvasGradesDialog classId={parsedClassId} />
-                  <SendContractUpdatesDialog classId={parsedClassId} />
-                </div>
-              </CardHeader>
-              <CardContent>
-                {!students?.length ? (
-                  <p className="text-center text-muted-foreground py-8">
-                    No students enrolled yet. Click "Import Students" to add students to this class.
-                  </p>
-                ) : (
-                  <div className="space-y-6">
-                    {/* Search and Filter Controls */}
-                    <div className="flex flex-col sm:flex-row gap-4">
-                      <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          placeholder="Search students by name..."
-                          value={studentSearch}
-                          onChange={(e) => setStudentSearch(e.target.value)}
-                          className="pl-10"
-                        />
-                      </div>
-                      <Select value={contractFilter} onValueChange={setContractFilter}>
-                        <SelectTrigger className="w-full sm:w-[200px]">
-                          <SelectValue placeholder="Filter by contract" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Students</SelectItem>
-                          <SelectItem value="none">No Contract Selected</SelectItem>
-                          {contracts?.map((contract) => (
-                            <SelectItem key={contract.id} value={contract.grade}>
-                              Grade {contract.grade} Contract
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {/* Student List */}
-                    {(() => {
-                      // Extract last name - handles "LastName, FirstName" or "FirstName LastName" formats
-                      const getLastName = (fullName: string) => {
-                        if (fullName.includes(',')) {
-                          // "Grossman, Abigail" -> "Grossman"
-                          return fullName.split(',')[0].trim().toLowerCase();
-                        }
-                        // "Abigail Grossman" -> "Grossman"
-                        return fullName.split(' ').slice(-1)[0].toLowerCase();
-                      };
-
-                      const filteredStudents = [...students]
-                        .sort((a, b) => {
-                          const lastNameA = getLastName(a.fullName);
-                          const lastNameB = getLastName(b.fullName);
-                          return lastNameA.localeCompare(lastNameB);
-                        })
-                        .filter((student) => {
-                          const searchLower = studentSearch.toLowerCase();
-                          const matchesSearch = studentSearch === "" ||
-                            student.fullName.toLowerCase().includes(searchLower) ||
-                            student.username.toLowerCase().includes(searchLower);
-                          const studentContract = getStudentContract(student.id);
-                          let matchesContract = true;
-                          if (contractFilter === "none") {
-                            matchesContract = !studentContract;
-                          } else if (contractFilter !== "all") {
-                            matchesContract = studentContract?.grade === contractFilter;
-                          }
-                          return matchesSearch && matchesContract;
-                        });
-
-                      if (filteredStudents.length === 0) {
-                        return (
-                          <p className="text-center text-muted-foreground py-8">
-                            No students match your search or filter criteria.
-                          </p>
-                        );
-                      }
-
-                      return (
-                        <>
-                          <p className="text-sm text-muted-foreground">
-                            Showing {filteredStudents.length} of {students.length} student{students.length !== 1 ? 's' : ''}
-                          </p>
-                          {filteredStudents.map((student) => {
-                            const contract = getStudentContract(student.id);
-                            const studentProgress = studentsProgress?.filter(p => p.studentId === student.id) || [];
-                            const standing = evaluateStanding({
-                              contracts: (contracts ?? []).map(c => ({
-                                id: c.id,
-                                grade: c.grade,
-                                assignments: c.assignments,
-                                categoryRequirements: c.categoryRequirements,
-                                requiredParticipationSessions: c.requiredParticipationSessions,
-                                maxAbsences: c.maxAbsences,
-                              })),
-                              chosenContractId: (studentContracts as any[] | undefined)?.find(
-                                (sc: any) => sc.studentId === student.id
-                              )?.contractId ?? null,
-                              assignments: assignments ?? [],
-                              progress: studentProgress,
-                              participationSessions: (allParticipation ?? []).filter(
-                                r => r.studentId === student.id && meetsParticipationBar(r.participation, classData.participationBar)
-                              ).length,
-                              absences: Number(
-                                (allAbsences ?? []).find(a => a.studentId === student.id)?.absences ?? 0
-                              ),
-                              policy: {
-                                absencePenaltyThreshold: classData.absencePenaltyThreshold,
-                                absenceFailureThreshold: classData.absenceFailureThreshold,
-                              },
-                            });
-                            const studentAttendance = {
-                              absences: Number(
-                                (allAbsences ?? []).find(a => a.studentId === student.id)?.absences ?? 0
-                              ),
-                              participationSessions: (allParticipation ?? []).filter(
-                                r => r.studentId === student.id && meetsParticipationBar(r.participation, classData.participationBar)
-                              ).length,
-                            };
-
-                            return (
-                              <Card key={student.id} className="relative">
-                                <CardHeader>
-                                  <div className="flex items-center justify-between">
-                                    <div>
-                                      <CardTitle className="text-base">{student.fullName}</CardTitle>
-                                      <CardDescription>{student.username}</CardDescription>
-                                    </div>
-                                    <div className="space-x-2">
-                                      <ViewStudentProfileDialog
-                                        student={student}
-                                        classId={parsedClassId}
-                                      />
-                                    </div>
-                                  </div>
-                                </CardHeader>
-                                <CardContent>
-                                  <div className="space-y-4">
-                                    <div className="flex items-center justify-between">
-                                      <div>
-                                        <p className="font-medium">Selected Contract:</p>
-                                        <p className="text-sm text-muted-foreground">
-                                          {contract ? `Grade ${contract.grade}` : 'No contract selected'}
-                                        </p>
-                                        {contract && (
-                                          <p className="text-sm mt-1">
-                                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                              standing.chosen?.met
-                                                ? "bg-green-100 text-green-700"
-                                                : "bg-amber-100 text-amber-700"
-                                            }`}>
-                                              {standing.chosen?.met ? "Meeting contract" : "Not yet met"}
-                                            </span>
-                                            {standing.effectiveGrade && (
-                                              <span className="text-muted-foreground ml-2">
-                                                currently earning {standing.effectiveGrade}
-                                                {standing.penalty !== "none" && " (absence penalty applied)"}
-                                              </span>
-                                            )}
-                                          </p>
-                                        )}
-                                      </div>
-                                      {contract && (
-                                        <div className="flex items-center gap-4 text-sm">
-                                          <div>
-                                            <span className="font-medium">Absences: </span>
-                                            <span className={
-                                              isOverAbsenceLimit(studentAttendance.absences, contract.maxAbsences)
-                                                ? "text-red-600 font-semibold"
-                                                : "text-muted-foreground"
-                                            }>
-                                              {studentAttendance.absences} / {contract.maxAbsences ?? 0}
-                                            </span>
-                                          </div>
-                                          {(contract.requiredParticipationSessions ?? 0) > 0 && (
-                                            <div>
-                                              <span className="font-medium">Participation: </span>
-                                              <span className={
-                                                studentAttendance.participationSessions >= (contract.requiredParticipationSessions ?? 0)
-                                                  ? "text-green-700 font-semibold"
-                                                  : "text-muted-foreground"
-                                              }>
-                                                {studentAttendance.participationSessions} / {contract.requiredParticipationSessions}
-                                              </span>
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                    {contract && (
-                                      <div>
-                                        <p className="font-medium mb-2">Required Assignments:</p>
-                                        <div className="space-y-4">
-                                          {/* Group assignments by moduleGroup */}
-                                          {(() => {
-                                            const groupedReqs = contract.assignments?.reduce((groups, req) => {
-                                              const assignment = assignments?.find(a => a.id === req.id);
-                                              if (!assignment) return groups;
-                                              const group = assignment.moduleGroup || 'Uncategorized';
-                                              if (!groups[group]) groups[group] = [];
-                                              groups[group].push({ req, assignment });
-                                              return groups;
-                                            }, {} as Record<string, { req: { id: number; comments?: string }; assignment: Assignment }[]>);
-
-                                            return Object.entries(groupedReqs || {}).map(([groupName, groupItems]) => {
-                                              // Calculate group stats for this student
-                                              const groupStats = groupItems.reduce(
-                                                (stats, { assignment }) => {
-                                                  const progress = studentProgress.find(p => p.assignmentId === assignment.id);
-                                                  const status = getAssignmentDisplayState(assignment.scoringType, progress);
-                                                  if (status === "completed") stats.completed++;
-                                                  else if (status === "in-progress") stats.inProgress++;
-                                                  else stats.notSubmitted++;
-                                                  return stats;
-                                                },
-                                                { completed: 0, inProgress: 0, notSubmitted: 0 }
-                                              );
-                                              const totalInGroup = groupItems.length;
-
-                                              // Check for minAverage requirement
-                                              const categoryReq = (contract as any).categoryRequirements?.find((cr: any) => cr.category === groupName);
-                                              const minAverage = categoryReq?.minAverage;
-                                              const averageStats = computeCategoryAverage(
-                                                groupItems.map(({ assignment }) => ({
-                                                  numericGrade: studentProgress.find(p => p.assignmentId === assignment.id)?.numericGrade,
-                                                  dueDate: assignment.dueDate,
-                                                }))
-                                              );
-                                              const groupAverage = averageStats.average;
-
-                                              return (
-                                                <div key={groupName} className="border-l-2 border-blue-200 pl-3">
-                                                  <div className="flex items-center justify-between mb-2">
-                                                    <div className="flex items-center gap-2">
-                                                      <span className="font-medium text-sm text-[#0072BC]">{groupName}</span>
-                                                      {minAverage != null && (
-                                                        <span
-                                                          className={`text-xs px-1.5 py-0.5 rounded ${
-                                                            averageStats.isEmpty
-                                                              ? "bg-gray-100 text-gray-600"
-                                                              : groupAverage >= minAverage
-                                                                ? "bg-green-100 text-green-700"
-                                                                : "bg-amber-100 text-amber-700"
-                                                          }`}
-                                                          title={
-                                                            averageStats.isEmpty
-                                                              ? "Nothing graded or past due yet"
-                                                              : `${averageStats.graded} graded, ${averageStats.missed} past due counted as 0, ${averageStats.pending} not yet due`
-                                                          }
-                                                        >
-                                                          {averageStats.isEmpty
-                                                            ? `Avg: none yet / ${minAverage} required`
-                                                            : `Avg: ${groupAverage.toFixed(1)} / ${minAverage} required`}
-                                                        </span>
-                                                      )}
-                                                    </div>
-                                                    <div className="flex items-center gap-3 text-xs">
-                                                      <span className="flex items-center gap-1">
-                                                        <CheckCircle2 className="h-3 w-3 text-green-600" />
-                                                        {groupStats.completed}
-                                                      </span>
-                                                      <span className="flex items-center gap-1">
-                                                        <Circle className="h-3 w-3 text-yellow-600" />
-                                                        {groupStats.inProgress}
-                                                      </span>
-                                                      <span className="flex items-center gap-1">
-                                                        <XCircle className="h-3 w-3 text-gray-400" />
-                                                        {groupStats.notSubmitted}
-                                                      </span>
-                                                    </div>
-                                                  </div>
-                                                  {/* Mini progress bar */}
-                                                  <div className="w-full bg-gray-200 rounded-full h-1.5 mb-2">
-                                                    <div className="flex h-1.5 rounded-full overflow-hidden">
-                                                      <div className="bg-green-600" style={{ width: `${(groupStats.completed / totalInGroup) * 100}%` }} />
-                                                      <div className="bg-yellow-500" style={{ width: `${(groupStats.inProgress / totalInGroup) * 100}%` }} />
-                                                    </div>
-                                                  </div>
-                                                  <div className="space-y-1">
-                                                    {groupItems.map(({ req, assignment }) => {
-                                                      const assignmentProgress = studentProgress.find(p => p.assignmentId === assignment.id);
-                                                      const status = getAssignmentDisplayState(assignment.scoringType, assignmentProgress);
-
-                                                      return (
-                                                        <div key={assignment.id} className="flex items-center justify-between">
-                                                          <div className="flex items-center space-x-2">
-                                                            {assignment.scoringType === "status" && getStatusIcon(status)}
-                                                            <span className="text-sm">
-                                                              {assignment.name}
-                                                              {req.comments && (
-                                                                <span className="text-muted-foreground ml-1">
-                                                                  ({req.comments})
-                                                                </span>
-                                                              )}
-                                                            </span>
-                                                          </div>
-                                                          <div className="flex items-center space-x-2">
-                                                            {assignmentProgress && assignment.scoringType === "numeric" && assignmentProgress.numericGrade !== null && (
-                                                              <span className="text-sm mr-2">
-                                                                Score: {parseFloat(assignmentProgress.numericGrade).toFixed(1)}
-                                                              </span>
-                                                            )}
-                                                            <UpdateAssignmentStatusDialog
-                                                              classId={parsedClassId}
-                                                              studentId={student.id}
-                                                              assignment={assignment}
-                                                              currentProgress={assignmentProgress}
-                                                            />
-                                                          </div>
-                                                        </div>
-                                                      );
-                                                    })}
-                                                  </div>
-                                                </div>
-                                              );
-                                            });
-                                          })()}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            );
-                          })}
-                        </>
-                      );
-                    })()}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
       </main>
 
       {/* Invite Students Dialog */}

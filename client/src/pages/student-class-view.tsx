@@ -376,11 +376,24 @@ export default function StudentClassView() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {/* Attendance and participation, both recorded per class session */}
-                    <div className="border-l-4 border-red-500 pl-4 mb-6">
-                      <h3 className="text-lg font-semibold text-red-700 mb-2">Attendance</h3>
+                    {/* Neutral until the limit is actually exceeded. Framing a student
+                        with zero absences in alarm red reads as a warning they have
+                        done nothing to earn. */}
+                    <div
+                      className={`border-l-4 pl-4 mb-6 ${
+                        overAbsenceLimit ? "border-red-500" : "border-border"
+                      }`}
+                    >
+                      <h3
+                        className={`text-lg font-semibold mb-2 ${
+                          overAbsenceLimit ? "text-bad" : ""
+                        }`}
+                      >
+                        Attendance
+                      </h3>
                       <div className="flex items-center space-x-4">
                         <div className="text-sm">
-                          <span className={overAbsenceLimit ? "font-medium text-red-700" : "font-medium"}>
+                          <span className={overAbsenceLimit ? "font-medium text-bad" : "font-medium"}>
                             {absenceCount}
                           </span>
                           <span className="text-muted-foreground"> / </span>
@@ -391,9 +404,11 @@ export default function StudentClassView() {
                           </span>
                         </div>
                         <div className="flex-1">
-                          <div className="bg-gray-200 rounded-full h-2">
+                          <div className="bar-track rounded-full h-2">
                             <div
-                              className="h-2 rounded-full transition-all duration-300 bg-red-600"
+                              className={`h-2 rounded-full transition-all duration-300 ${
+                                overAbsenceLimit ? "bg-red-600" : "bg-muted-foreground/50"
+                              }`}
                               style={{
                                 width: `${Math.min(100, (absenceCount / Math.max(1, maxAbsences)) * 100)}%`,
                               }}
@@ -404,8 +419,8 @@ export default function StudentClassView() {
                     </div>
 
                     {requiredParticipation > 0 && (
-                      <div className="border-l-4 border-[#0072BC] pl-4 mb-6">
-                        <h3 className="text-lg font-semibold text-[#0072BC] mb-2">Participation</h3>
+                      <div className="border-l-4 border-[#0072BC] dark:border-sky-400 pl-4 mb-6">
+                        <h3 className="text-lg font-semibold text-brand mb-2">Participation</h3>
                         <div className="flex items-center space-x-4">
                           <div className="text-sm">
                             <span className="font-medium">{participationCount}</span>
@@ -416,7 +431,7 @@ export default function StudentClassView() {
                             </span>
                           </div>
                           <div className="flex-1">
-                            <div className="bg-gray-200 rounded-full h-2">
+                            <div className="bar-track rounded-full h-2">
                               <div
                                 className="bg-[#0072BC] h-2 rounded-full transition-all duration-300"
                                 style={{
@@ -488,11 +503,11 @@ export default function StudentClassView() {
                               <div key={group} className="space-y-4" role="region" aria-labelledby={`group-${group}`}>
                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                   <div className="flex items-center gap-2">
-                                    <h4 id={`group-${group}`} className="font-bold text-xl text-[#0072BC]">{group}</h4>
+                                    <h4 id={`group-${group}`} className="font-bold text-xl text-brand">{group}</h4>
                                     <span className={`text-sm px-2 py-0.5 rounded-full ${
                                       categoryMet
-                                        ? "bg-green-100 text-green-700"
-                                        : "bg-amber-100 text-amber-700"
+                                        ? "pill-ok"
+                                        : "pill-warn"
                                     }`}>
                                       {categoryMet ? "Met" : "Not Met"}
                                     </span>
@@ -504,10 +519,10 @@ export default function StudentClassView() {
                                       <div className="flex items-center justify-between">
                                         <div className={`px-4 py-3 rounded-md border text-lg font-semibold ${
                                           averageStats.isEmpty
-                                            ? "bg-gray-50 border-gray-200 text-gray-600"
+                                            ? "surface-neutral"
                                             : averageMet
-                                              ? "bg-green-50 border-green-200 text-green-700"
-                                              : "bg-amber-50 border-amber-200 text-amber-700"
+                                              ? "surface-ok"
+                                              : "surface-warn"
                                         }`}>
                                           {averageStats.isEmpty
                                             ? `Nothing graded yet - ${minAverage} average required`
@@ -524,7 +539,7 @@ export default function StudentClassView() {
                                           <span>Progress toward {minAverage} average</span>
                                           <span>{Math.min(100, Math.round((groupAverage / minAverage) * 100))}%</span>
                                         </div>
-                                        <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                        <div className="w-full bar-track rounded-full h-2.5">
                                           <div
                                             className={`h-2.5 rounded-full transition-all ${
                                               averageMet ? "bg-green-600" : "bg-amber-500"
@@ -555,12 +570,12 @@ export default function StudentClassView() {
                           <div key={group} className="space-y-4" role="region" aria-labelledby={`group-${group}`}>
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                               <div className="flex items-center gap-2">
-                                <h4 id={`group-${group}`} className="font-bold text-xl text-[#0072BC]">{group}</h4>
+                                <h4 id={`group-${group}`} className="font-bold text-xl text-brand">{group}</h4>
                                 {hasCountRequirement && (
                                   <span className={`text-sm px-2 py-0.5 rounded-full ${
                                     categoryMet
-                                      ? "bg-green-100 text-green-700"
-                                      : "bg-amber-100 text-amber-700"
+                                      ? "pill-ok"
+                                      : "pill-warn"
                                   }`}>
                                     {groupStats.completed}/{requiredCount} required
                                   </span>
@@ -585,7 +600,7 @@ export default function StudentClassView() {
                               </div>
                             </div>
                             {/* Progress bar for the group */}
-                            <div className="w-full bg-gray-200 rounded-full h-2.5">
+                            <div className="w-full bar-track rounded-full h-2.5">
                               <div className="flex h-2.5 rounded-full overflow-hidden">
                                 <div
                                   className="bg-green-600 h-2.5"
@@ -640,7 +655,7 @@ export default function StudentClassView() {
                                           )}
                                           {assignment.dueDate && (
                                             <div className={`flex items-center gap-1.5 text-sm ${
-                                              pastDue ? "text-red-600 font-semibold" : "text-muted-foreground"
+                                              pastDue ? "text-bad font-semibold" : "text-muted-foreground"
                                             }`}>
                                               {pastDue && <AlertTriangle className="h-4 w-4" />}
                                               <span>
@@ -680,9 +695,9 @@ export default function StudentClassView() {
                                                   <>
                                                     <div className="flex items-center justify-between">
                                                       <div className={`px-3 py-2 rounded-md border text-base font-semibold ${
-                                                        !progress?.numericGrade ? "bg-gray-50" :
-                                                          meetsRequirement ? "bg-green-50 border-green-200 text-green-700" :
-                                                            "bg-amber-50 border-amber-200 text-amber-700"
+                                                        !progress?.numericGrade ? "surface-neutral" :
+                                                          meetsRequirement ? "surface-ok" :
+                                                            "surface-warn"
                                                       }`}>
                                                         Score: {progress?.numericGrade ? currentPoints.toFixed(1) : "Not submitted"}
                                                         {minRequired && progress?.numericGrade && (
@@ -705,7 +720,7 @@ export default function StudentClassView() {
                                                           <span>Progress toward {minRequired} points</span>
                                                           <span>{Math.min(100, Math.round((currentPoints / minRequired) * 100))}%</span>
                                                         </div>
-                                                        <div className="w-full bg-gray-200 rounded-full h-2">
+                                                        <div className="w-full bar-track rounded-full h-2">
                                                           <div
                                                             className={`h-2 rounded-full transition-all ${
                                                               meetsRequirement ? "bg-green-600" : "bg-amber-500"

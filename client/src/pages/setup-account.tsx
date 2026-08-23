@@ -182,7 +182,7 @@ export default function SetupAccountPage() {
           <div className="mx-auto w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mb-4">
             <span className="text-white font-bold text-xl">W</span>
           </div>
-          <CardTitle className="text-2xl font-bold text-gray-900">
+          <CardTitle className="text-2xl font-bold text-foreground">
             Welcome to Widener University
           </CardTitle>
           <CardDescription>

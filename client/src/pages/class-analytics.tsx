@@ -249,11 +249,11 @@ export default function ClassAnalytics() {
                         <h3 className="text-lg font-semibold">{performance.student.username}</h3>
                         <div className="flex items-center gap-2 mt-1">
                           {performance.contract ? (
-                            <Badge variant="outline" className={performance.contract.isConfirmed ? "bg-green-50 text-green-700" : "bg-yellow-50 text-yellow-700"}>
+                            <Badge variant="outline" className={performance.contract.isConfirmed ? "pill-ok" : "pill-warn"}>
                               Contract {performance.contract.isConfirmed ? "(Confirmed)" : "(Pending)"}
                             </Badge>
                           ) : (
-                            <Badge variant="outline" className="bg-gray-50 text-gray-700">No Contract Selected</Badge>
+                            <Badge variant="outline" className="pill-neutral">No Contract Selected</Badge>
                           )}
                         </div>
                       </div>
