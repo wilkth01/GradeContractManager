@@ -97,6 +97,14 @@ app.get("/api/health", (_req, res) => {
     console.error("Failed to initialize WebSocket:", error);
   }
 
+  // Anything under /api that reached here matched no route. Without this the
+  // SPA catch-all below answers with index.html and a 200, so a client calling
+  // a removed or mistyped endpoint gets HTML to parse as JSON rather than a
+  // clean 404.
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ message: "Not found" });
+  });
+
   app.use(errorHandler);
 
   // importantly only setup vite in development and after
@@ -114,12 +122,28 @@ app.get("/api/health", (_req, res) => {
   console.log(`Current working directory: ${process.cwd()}`);
   
   // Log uncaught errors
+  // After an uncaught exception the process is in an undefined state. Logging
+  // and carrying on is worse than stopping: a half-broken server still holding
+  // the port keeps a supervisor from restarting it, and hides the failure. This
+  // was not academic -- a failed bind previously left the process "running"
+  // while serving nothing.
   process.on('uncaughtException', (error) => {
     console.error('Uncaught Exception:', error);
+    process.exit(1);
   });
 
   process.on('unhandledRejection', (error) => {
     console.error('Unhandled Rejection:', error);
+    process.exit(1);
+  });
+
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE') {
+      console.error(`Port ${port} is already in use. Stop the other process and try again.`);
+    } else {
+      console.error('Server error:', error);
+    }
+    process.exit(1);
   });
 
   server.listen({
