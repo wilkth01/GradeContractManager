@@ -376,7 +376,11 @@ export const sendMessagesSchema = z.object({
 
 export const setAbsencesSchema = z.object({
   studentId: z.number().int(),
-  absences: z.number().min(0),
+  // Bounded by the column, which is numeric(5,2). Without a ceiling a
+  // mistyped correction reaches the database and comes back as a 500 rather
+  // than a message saying the number is wrong. A term is ~45 meetings, so
+  // anything near this is already a typo.
+  absences: z.number().min(0).max(999.99),
 });
 
 // Audit logging table for tracking all changes

@@ -126,4 +126,49 @@ describe("buildPull", () => {
 
     expect(result.absenceChanges).toHaveLength(0);
   });
+
+  it("takes an absence total at face value across the whole term", () => {
+    // Qwickly writes a running count, not a score. Rescaling it against the
+    // column's points_possible -- which every graded assignment goes through --
+    // would turn 45 absences into 4. The absence branch must not do that.
+    for (const total of [0, 1, 7, 23, 44, 45]) {
+      const result = buildPull({
+        ...base,
+        submissions: [submission(900, 777, total)],
+        absenceCanvasAssignmentId: 777,
+        canvasPointsById: new Map([
+          [500, 4],
+          [777, 45],
+        ]),
+        currentAbsences: new Map([[1, -1]]),
+      });
+
+      expect(result.absenceChanges[0].newAbsences).toBe(total);
+    }
+  });
+
+  it("keeps the half day Qwickly counts for a late arrival", () => {
+    const result = buildPull({
+      ...base,
+      submissions: [submission(900, 777, 12.5)],
+      absenceCanvasAssignmentId: 777,
+      canvasPointsById: new Map([[777, 100]]),
+    });
+
+    expect(result.absenceChanges[0].newAbsences).toBe(12.5);
+  });
+
+  it("never files the absence column as a grade", () => {
+    // If the same Canvas column were also mapped to an assignment, importing it
+    // as a grade would put an absence count in the gradebook.
+    const result = buildPull({
+      ...base,
+      assignments: [assignment(10, 500), assignment(11, 777)],
+      submissions: [submission(900, 777, 45)],
+      absenceCanvasAssignmentId: 777,
+    });
+
+    expect(result.gradeChanges).toHaveLength(0);
+    expect(result.absenceChanges[0].newAbsences).toBe(45);
+  });
 });
