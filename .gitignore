@@ -29,3 +29,4 @@ Thumbs.db
 # Credentials (never commit these)
 cookies.txt
 credentials.json
+.claude/settings.local - Copy.json
