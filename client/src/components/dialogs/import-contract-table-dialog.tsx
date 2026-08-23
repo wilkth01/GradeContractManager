@@ -17,7 +17,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -182,10 +181,12 @@ export function ImportContractTableDialog({ classId, assignments }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        {/* min-h-0 is load-bearing: a flex item defaults to min-height:auto,
-            which refuses to shrink below its content, so the area would grow
-            past the dialog and clip the rows instead of scrolling them. */}
-        <ScrollArea className="flex-1 min-h-0 pr-3 -mr-3">
+        {/* Native scrolling rather than the Radix scroll area: that one hides
+            the real scrollbar and renders its own only when its measurement
+            finds an overflow, which leaves a long list silently unscrollable.
+            The explicit max height also means this does not depend on the
+            flex container resolving a height. */}
+        <div className="flex-1 min-h-0 max-h-[60vh] overflow-y-auto pr-2">
           <div className="space-y-4">
             <div className="space-y-2">
               <Textarea
@@ -430,7 +431,7 @@ export function ImportContractTableDialog({ classId, assignments }: Props) {
               </>
             )}
           </div>
-        </ScrollArea>
+        </div>
 
         {table && (
           <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
