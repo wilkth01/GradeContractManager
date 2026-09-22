@@ -4,7 +4,7 @@ import { toPublicUser } from "../auth";
 import { requireClassOwner } from "../middleware";
 import { asyncHandler } from "../errors";
 import { AssignmentStatus, isAssignmentDone, meetsParticipationBar } from "@shared/constants";
-import { evaluateStanding } from "@shared/contract-evaluation";
+import { evaluateStanding, withGradingStarted } from "@shared/contract-evaluation";
 
 const router = Router();
 
@@ -76,6 +76,8 @@ router.get(
       maxAbsences: c.maxAbsences,
     }));
 
+    const gradedAssignments = withGradingStarted(assignments, allProgressFlat);
+
     const studentPerformance = students.map((student) => {
       const studentProgress = progressByStudent.get(student.id) || [];
       const enrollment = studentContracts.find((sc) => sc.studentId === student.id);
@@ -83,7 +85,7 @@ router.get(
       const standing = evaluateStanding({
         contracts: evaluationContracts,
         chosenContractId: enrollment?.contractId ?? null,
-        assignments,
+        assignments: gradedAssignments,
         progress: studentProgress,
         participationSessions: participation.filter(
           (r) =>

@@ -44,6 +44,12 @@ export interface GradeableEntry {
   /** The stored numeric grade, or null/undefined when not yet graded. */
   numericGrade?: string | number | null;
   dueDate?: Date | string | null;
+  /**
+   * Whether anyone in the class has a grade on this assignment yet. False
+   * means it has not been graded for anybody, so a missing grade says nothing
+   * about this student. Undefined is treated as true.
+   */
+  gradingStarted?: boolean;
 }
 
 export interface CategoryAverage {
@@ -57,6 +63,8 @@ export interface CategoryAverage {
   missed: number;
   /** Ungraded and not yet due, so excluded entirely. */
   pending: number;
+  /** Past due, but not graded for anyone yet, so excluded until it is. */
+  awaitingGrades: number;
   /** True when nothing has been graded or missed yet. */
   isEmpty: boolean;
 }
@@ -71,6 +79,10 @@ export interface CategoryAverage {
  *
  * Work with no due date is never counted as missed, only as pending, since
  * there is nothing to be late against.
+ *
+ * Nor is work nobody has been graded on yet. Grades for annotation readings
+ * arrive in batches, days after the due date; zeroing everyone in between
+ * inflated the denominator for the whole class until the next Canvas pull.
  */
 export function computeCategoryAverage(
   entries: GradeableEntry[],
@@ -81,6 +93,7 @@ export function computeCategoryAverage(
   let graded = 0;
   let missed = 0;
   let pending = 0;
+  let awaitingGrades = 0;
 
   for (const entry of entries) {
     const raw = entry.numericGrade;
@@ -91,11 +104,13 @@ export function computeCategoryAverage(
       total += value;
       counted++;
       graded++;
-    } else if (isPastDue(entry.dueDate, now)) {
+    } else if (!isPastDue(entry.dueDate, now)) {
+      pending++;
+    } else if (entry.gradingStarted === false) {
+      awaitingGrades++;
+    } else {
       counted++;
       missed++;
-    } else {
-      pending++;
     }
   }
 
@@ -105,8 +120,78 @@ export function computeCategoryAverage(
     graded,
     missed,
     pending,
+    awaitingGrades,
     isEmpty: counted === 0,
   };
+}
+
+/**
+ * Mark each assignment with whether grading on it has begun.
+ *
+ * "Begun" means at least one student has a recorded grade or status. Every
+ * caller that evaluates contracts should pass its assignments through this
+ * first, with progress for the whole class, not just one student.
+ */
+export function withGradingStarted<T extends { id: number }>(
+  assignments: T[],
+  classProgress: { assignmentId: number; status?: number | null; numericGrade?: string | number | null }[]
+): (T & { gradingStarted: boolean })[] {
+  const graded = new Set<number>();
+  for (const p of classProgress) {
+    const hasGrade = p.numericGrade !== null && p.numericGrade !== undefined && p.numericGrade !== "";
+    if (hasGrade || p.status != null) graded.add(p.assignmentId);
+  }
+  return assignments.map((a) => ({ ...a, gradingStarted: graded.has(a.id) }));
+}
+
+/**
+ * Where one assignment stands for one student, for display.
+ *
+ * Splits the old "Not Submitted" in three: work that is genuinely missing,
+ * work not due yet, and work that is past due but nobody has been graded on.
+ * Only the first is something the student failed to do.
+ */
+export type AssignmentStanding =
+  | "completed"
+  | "in-progress"
+  | "not-submitted"
+  | "not-yet-due"
+  | "awaiting-grades";
+
+export function assignmentStanding(
+  assignment: Pick<EvaluationAssignment, "scoringType" | "dueDate" | "gradingStarted">,
+  progress: { status?: number | null; numericGrade?: string | number | null } | null | undefined,
+  now: Date = new Date()
+): AssignmentStanding {
+  const state = getAssignmentDisplayState(assignment.scoringType, progress);
+  if (state !== "not-submitted") return state;
+
+  // A recorded "Not Submitted" is the instructor's call; take it as given.
+  const recorded =
+    progress != null &&
+    (progress.status != null ||
+      (progress.numericGrade !== null && progress.numericGrade !== undefined && progress.numericGrade !== ""));
+  if (recorded) return "not-submitted";
+
+  if (!isPastDue(assignment.dueDate, now)) return "not-yet-due";
+  if (assignment.gradingStarted === false) return "awaiting-grades";
+  return "not-submitted";
+}
+
+export function getAssignmentStandingLabel(standing: AssignmentStanding): string {
+  switch (standing) {
+    case "completed":
+      return "Completed";
+    case "in-progress":
+      return "Work-in-Progress";
+    case "not-yet-due":
+      return "Not yet due";
+    case "awaiting-grades":
+      return "Not graded yet";
+    case "not-submitted":
+    default:
+      return "Not submitted";
+  }
 }
 
 // ===========================================================================
@@ -124,6 +209,8 @@ export interface EvaluationAssignment {
   moduleGroup: string | null;
   scoringType: "status" | "numeric";
   dueDate?: Date | string | null;
+  /** See GradeableEntry.gradingStarted. */
+  gradingStarted?: boolean;
 }
 
 export interface EvaluationProgress {
@@ -229,6 +316,7 @@ export function evaluateContract(input: EvaluationInput): ContractResult {
         items.map(({ assignment }) => ({
           numericGrade: progressFor(assignment.id)?.numericGrade,
           dueDate: assignment.dueDate,
+          gradingStarted: assignment.gradingStarted,
         })),
         now
       );
@@ -250,6 +338,9 @@ export function evaluateContract(input: EvaluationInput): ContractResult {
       }
       if (stats.pending > 0) {
         informational.push(`${plural(stats.pending, "item")} in ${group} not yet due`);
+      }
+      if (stats.awaitingGrades > 0) {
+        informational.push(`${plural(stats.awaitingGrades, "item")} in ${group} not graded yet`);
       }
     }
 

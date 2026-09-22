@@ -1,7 +1,7 @@
 import { useAuth } from "@/hooks/use-auth";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Class, Assignment, GradeContract, AssignmentProgress, CategoryRequirement, SessionParticipation, StudentAbsences } from "@shared/schema";
+import { Class, ClassAssignment, GradeContract, AssignmentProgress, CategoryRequirement, SessionParticipation, StudentAbsences } from "@shared/schema";
 
 type GradeContractWithCategories = GradeContract & { categoryRequirements?: CategoryRequirement[] | null };
 import {
@@ -37,6 +37,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle2, XCircle, Circle, ArrowLeft, AlertTriangle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
+import { BreakdownRows, groupContractItems } from "@/components/student/ContractBreakdown";
 
 interface StudentContract {
   contractId: number | null;
@@ -70,7 +71,7 @@ export default function StudentClassView() {
   });
 
   // Fetch assignments only if we have a contract selected
-  const { data: assignments, isLoading: isLoadingAssignments } = useQuery<Assignment[]>({
+  const { data: assignments, isLoading: isLoadingAssignments } = useQuery<ClassAssignment[]>({
     queryKey: [`/api/classes/${parsedClassId}/assignments`],
     enabled: !isNaN(parsedClassId) && !!studentContract?.contractId,
   });
@@ -460,7 +461,7 @@ export default function StudentClassView() {
                               ...groups,
                               [group]: [...(groups[group] || []), { assignment, req }]
                             };
-                          }, {} as Record<string, { assignment: Assignment; req: { id: number; comments?: string; minPoints?: number } }[]>)
+                          }, {} as Record<string, { assignment: ClassAssignment; req: { id: number; comments?: string; minPoints?: number } }[]>)
                         ).map(([group, groupAssignments]) => {
                           // Calculate group progress statistics
                           const groupStats = groupAssignments.reduce(
@@ -491,6 +492,7 @@ export default function StudentClassView() {
                             groupAssignments.map(({ assignment }) => ({
                               numericGrade: studentProgress?.find(p => p.assignmentId === assignment.id)?.numericGrade,
                               dueDate: assignment.dueDate,
+                              gradingStarted: assignment.gradingStarted,
                             }))
                           );
                           const groupAverage = averageStats.average;
@@ -557,8 +559,26 @@ export default function StudentClassView() {
                                               : "") +
                                             (averageStats.pending > 0
                                               ? `. ${averageStats.pending} not yet due, so not counted.`
-                                              : ".")}
+                                              : ".") +
+                                            (averageStats.awaitingGrades > 0
+                                              ? ` ${averageStats.awaitingGrades} past due but not graded yet for anyone, so not counted until grades are in.`
+                                              : "")}
                                       </p>
+                                      {/* The average alone hides which readings pulled it
+                                          down, so every score is one click away. */}
+                                      <details className="group">
+                                        <summary className="cursor-pointer text-sm font-medium text-brand hover:underline">
+                                          Show the score for each assignment
+                                        </summary>
+                                        <div className="mt-3">
+                                          <BreakdownRows
+                                            items={
+                                              groupContractItems(currentContract, assignments, studentProgress ?? [])
+                                                .find(([name]) => name === group)?.[1] ?? []
+                                            }
+                                          />
+                                        </div>
+                                      </details>
                                     </div>
                                   </CardContent>
                                 </Card>

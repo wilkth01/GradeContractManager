@@ -1,4 +1,4 @@
-import { User, GradeContract } from "@shared/schema";
+import { User, GradeContract, ClassAssignment, AssignmentProgress } from "@shared/schema";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -26,6 +26,8 @@ import {
 } from "@/components/ui/select";
 import { User as UserIcon } from "lucide-react";
 import { StudentHistory } from "@/components/student/StudentHistory";
+import { ContractBreakdown } from "@/components/student/ContractBreakdown";
+import { UpdateAssignmentStatusDialog } from "@/components/dialogs/update-assignment-status-dialog";
 
 type Props = {
   student: User;
@@ -50,6 +52,16 @@ export function ViewStudentProfileDialog({ student, classId }: Props) {
   const { data: studentContract } = useQuery<StudentContract>({
     queryKey: [`/api/classes/${classId}/students/${student.id}/contract`],
   });
+
+  const { data: assignments } = useQuery<ClassAssignment[]>({
+    queryKey: [`/api/classes/${classId}/assignments`],
+  });
+
+  const { data: progress } = useQuery<AssignmentProgress[]>({
+    queryKey: [`/api/classes/${classId}/students/${student.id}/progress`],
+  });
+
+  const currentContract = contracts?.find(c => c.id === studentContract?.contractId);
 
   const setContractMutation = useMutation({
     mutationFn: async (contractId: number) => {
@@ -86,7 +98,7 @@ export function ViewStudentProfileDialog({ student, classId }: Props) {
           View Profile
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Student Profile</DialogTitle>
           <DialogDescription>
@@ -147,6 +159,29 @@ export function ViewStudentProfileDialog({ student, classId }: Props) {
               )}
             </CardContent>
           </Card>
+
+          {currentContract && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Contract Progress</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ContractBreakdown
+                  contract={currentContract}
+                  assignments={assignments ?? []}
+                  progress={progress ?? []}
+                  renderAction={({ assignment, progress: current }) => (
+                    <UpdateAssignmentStatusDialog
+                      classId={classId}
+                      studentId={student.id}
+                      assignment={assignment}
+                      currentProgress={current}
+                    />
+                  )}
+                />
+              </CardContent>
+            </Card>
+          )}
 
           <StudentHistory classId={classId} studentId={student.id} />
         </div>

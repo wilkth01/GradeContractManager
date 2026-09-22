@@ -407,6 +407,11 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type Class = typeof classes.$inferSelect;
 export type Assignment = typeof assignments.$inferSelect;
+/** An assignment as the class assignments endpoint returns it. */
+export type ClassAssignment = Assignment & {
+  /** Whether any student has a grade on it yet. */
+  gradingStarted?: boolean;
+};
 export type GradeContract = typeof gradeContracts.$inferSelect;
 export type StudentContract = typeof studentContracts.$inferSelect;
 export type AssignmentProgress = typeof assignmentProgress.$inferSelect;

@@ -4,9 +4,8 @@ import { useParams, useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Class, Assignment, GradeContract, User, AssignmentProgress, SessionParticipation, StudentAbsences, insertClassSchema } from "@shared/schema";
+import { Class, Assignment, ClassAssignment, GradeContract, User, AssignmentProgress, SessionParticipation, StudentAbsences, insertClassSchema } from "@shared/schema";
 import {
-  getAssignmentDisplayState,
   isOverAbsenceLimit,
   meetsParticipationBar,
   getParticipationLabel,
@@ -41,7 +40,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, CheckCircle2, XCircle, Circle, Edit2, ArrowLeft, TrendingUp, Settings, Search, ChevronDown, ChevronRight } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, Circle, Clock, Edit2, ArrowLeft, TrendingUp, Settings, Search, ChevronDown, ChevronRight } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -67,6 +66,7 @@ import { EditAssignmentDialog } from "@/components/dialogs/edit-assignment-dialo
 import { ReorderAssignmentsDialog } from "@/components/dialogs/reorder-assignments-dialog";
 import { ImportCanvasAssignmentsDialog } from "@/components/dialogs/import-canvas-assignments-dialog";
 import { ImportContractTableDialog } from "@/components/dialogs/import-contract-table-dialog";
+import { BreakdownRows, groupContractItems } from "@/components/student/ContractBreakdown";
 
 // Edit Class Settings Dialog Component
 function EditClassSettingsDialog({ classData }: { classData: Class }) {
@@ -320,7 +320,7 @@ export default function ClassManagement() {
     enabled: !isNaN(parsedClassId),
   });
 
-  const { data: assignments, isLoading: isLoadingAssignments } = useQuery<Assignment[]>({
+  const { data: assignments, isLoading: isLoadingAssignments } = useQuery<ClassAssignment[]>({
     queryKey: [`/api/classes/${parsedClassId}/assignments`],
     enabled: !isNaN(parsedClassId),
   });
@@ -444,25 +444,6 @@ export default function ClassManagement() {
     const studentContract = studentContracts.find((sc: any) => sc.studentId === studentId);
     if (!studentContract) return null;
     return contracts?.find(c => c.id === studentContract.contractId);
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "completed":
-        return <CheckCircle2 className="h-6 w-6 text-green-600" aria-hidden="true" />;
-      case "in-progress":
-        return <Circle className="h-6 w-6 text-yellow-600" aria-hidden="true" />;
-      case "not-submitted":
-        return <XCircle className="h-6 w-6 text-gray-400" aria-hidden="true" />;
-      case "good-standing":
-        return <CheckCircle2 className="h-6 w-6 text-green-600" aria-hidden="true" />;
-      case "at-limit":
-        return <Circle className="h-6 w-6 text-yellow-600" aria-hidden="true" />;
-      case "over-limit":
-        return <XCircle className="h-6 w-6 text-red-600" aria-hidden="true" />;
-      default:
-        return <XCircle className="h-6 w-6 text-gray-400" aria-hidden="true" />;
-    }
   };
 
   // The one-line bargain: what a student trades for this grade, beyond the
@@ -992,140 +973,117 @@ export default function ClassManagement() {
                                     </div>
                                     {contract && (
                                       <div>
-                                        <p className="text-sm font-medium mb-2">
-                                          Required Assignments
-                                          <span className="text-muted-foreground font-normal">
-                                            {" "}({contract.assignments?.length ?? 0})
-                                          </span>
-                                        </p>
-                                        <div className="space-y-3">
-                                          {/* Group assignments by moduleGroup */}
-                                          {(() => {
-                                            const groupedReqs = contract.assignments?.reduce((groups, req) => {
-                                              const assignment = assignments?.find(a => a.id === req.id);
-                                              if (!assignment) return groups;
-                                              const group = assignment.moduleGroup || 'Uncategorized';
-                                              if (!groups[group]) groups[group] = [];
-                                              groups[group].push({ req, assignment });
-                                              return groups;
-                                            }, {} as Record<string, { req: { id: number; comments?: string }; assignment: Assignment }[]>);
+                                        <div className="flex items-center justify-between gap-2 mb-2">
+                                          <p className="text-sm font-medium">
+                                            Required Assignments
+                                            <span className="text-muted-foreground font-normal">
+                                              {" "}({contract.assignments?.length ?? 0})
+                                            </span>
+                                          </p>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 text-xs"
+                                            onClick={() => toggleStudentExpanded(student.id)}
+                                            aria-expanded={isExpanded}
+                                            aria-controls={`student-${student.id}-assignments`}
+                                          >
+                                            {isExpanded ? "Hide assignments" : "Show each assignment"}
+                                          </Button>
+                                        </div>
+                                        <div id={`student-${student.id}-assignments`} className="space-y-3">
+                                          {groupContractItems(contract, assignments ?? [], studentProgress).map(([groupName, groupItems]) => {
+                                            const countOf = (standing: string) =>
+                                              groupItems.filter(item => item.standing === standing).length;
+                                            const completed = countOf("completed");
+                                            const inProgress = countOf("in-progress");
+                                            const notSubmitted = countOf("not-submitted");
+                                            // Not yet due, or past due with nobody graded yet.
+                                            const pending = groupItems.length - completed - inProgress - notSubmitted;
+                                            const totalInGroup = groupItems.length;
 
-                                            return Object.entries(groupedReqs || {}).map(([groupName, groupItems]) => {
-                                              // Calculate group stats for this student
-                                              const groupStats = groupItems.reduce(
-                                                (stats, { assignment }) => {
-                                                  const progress = studentProgress.find(p => p.assignmentId === assignment.id);
-                                                  const status = getAssignmentDisplayState(assignment.scoringType, progress);
-                                                  if (status === "completed") stats.completed++;
-                                                  else if (status === "in-progress") stats.inProgress++;
-                                                  else stats.notSubmitted++;
-                                                  return stats;
-                                                },
-                                                { completed: 0, inProgress: 0, notSubmitted: 0 }
-                                              );
-                                              const totalInGroup = groupItems.length;
+                                            const categoryReq = contract.categoryRequirements?.find(cr => cr.category === groupName);
+                                            const minAverage = categoryReq?.minAverage;
+                                            const averageStats = computeCategoryAverage(
+                                              groupItems.map(({ assignment, progress }) => ({
+                                                numericGrade: progress?.numericGrade,
+                                                dueDate: assignment.dueDate,
+                                                gradingStarted: assignment.gradingStarted,
+                                              }))
+                                            );
+                                            const groupAverage = averageStats.average;
 
-                                              // Check for minAverage requirement
-                                              const categoryReq = (contract as any).categoryRequirements?.find((cr: any) => cr.category === groupName);
-                                              const minAverage = categoryReq?.minAverage;
-                                              const averageStats = computeCategoryAverage(
-                                                groupItems.map(({ assignment }) => ({
-                                                  numericGrade: studentProgress.find(p => p.assignmentId === assignment.id)?.numericGrade,
-                                                  dueDate: assignment.dueDate,
-                                                }))
-                                              );
-                                              const groupAverage = averageStats.average;
-
-                                              return (
-                                                <div key={groupName} className="border-l-2 border-blue-200 pl-3">
-                                                  <div className="flex items-center justify-between mb-2">
-                                                    <div className="flex items-center gap-2">
-                                                      <span className="font-medium text-sm text-brand">{groupName}</span>
-                                                      {minAverage != null && (
-                                                        <span
-                                                          className={`text-xs px-1.5 py-0.5 rounded ${
-                                                            averageStats.isEmpty
-                                                              ? "pill-neutral"
-                                                              : groupAverage >= minAverage
-                                                                ? "pill-ok"
-                                                                : "pill-warn"
-                                                          }`}
-                                                          title={
-                                                            averageStats.isEmpty
-                                                              ? "Nothing graded or past due yet"
-                                                              : `${averageStats.graded} graded, ${averageStats.missed} past due counted as 0, ${averageStats.pending} not yet due`
-                                                          }
-                                                        >
-                                                          {averageStats.isEmpty
-                                                            ? `Avg: none yet / ${minAverage} required`
-                                                            : `Avg: ${groupAverage.toFixed(1)} / ${minAverage} required`}
-                                                        </span>
-                                                      )}
-                                                    </div>
-                                                    <div className="flex items-center gap-3 text-xs">
-                                                      <span className="flex items-center gap-1">
-                                                        <CheckCircle2 className="h-3 w-3 text-green-600" />
-                                                        {groupStats.completed}
+                                            return (
+                                              <div key={groupName} className="border-l-2 border-blue-200 pl-3">
+                                                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                                  <div className="flex items-center gap-2">
+                                                    <span className="font-medium text-sm text-brand">{groupName}</span>
+                                                    {minAverage != null && (
+                                                      <span
+                                                        className={`text-xs px-1.5 py-0.5 rounded ${
+                                                          averageStats.isEmpty
+                                                            ? "pill-neutral"
+                                                            : groupAverage >= minAverage
+                                                              ? "pill-ok"
+                                                              : "pill-warn"
+                                                        }`}
+                                                        title={
+                                                          `${averageStats.graded} graded, ${averageStats.missed} past due counted as 0, ` +
+                                                          `${averageStats.pending} not yet due, ${averageStats.awaitingGrades} not graded yet`
+                                                        }
+                                                      >
+                                                        {averageStats.isEmpty
+                                                          ? `Avg: none yet / ${minAverage} required`
+                                                          : `Avg: ${groupAverage.toFixed(2)} over ${averageStats.counted} / ${minAverage} required`}
                                                       </span>
-                                                      <span className="flex items-center gap-1">
-                                                        <Circle className="h-3 w-3 text-yellow-600" />
-                                                        {groupStats.inProgress}
-                                                      </span>
-                                                      <span className="flex items-center gap-1">
-                                                        <XCircle className="h-3 w-3 text-gray-400" />
-                                                        {groupStats.notSubmitted}
-                                                      </span>
-                                                    </div>
+                                                    )}
                                                   </div>
-                                                  {/* Mini progress bar */}
-                                                  <div className="w-full bar-track rounded-full h-1.5 mb-2">
-                                                    <div className="flex h-1.5 rounded-full overflow-hidden">
-                                                      <div className="bg-green-600" style={{ width: `${(groupStats.completed / totalInGroup) * 100}%` }} />
-                                                      <div className="bg-yellow-500" style={{ width: `${(groupStats.inProgress / totalInGroup) * 100}%` }} />
-                                                    </div>
-                                                  </div>
-                                                  <div
-                                                    id={`student-${student.id}-assignments`}
-                                                    className={isExpanded ? "space-y-1" : "hidden"}
-                                                  >
-                                                    {groupItems.map(({ req, assignment }) => {
-                                                      const assignmentProgress = studentProgress.find(p => p.assignmentId === assignment.id);
-                                                      const status = getAssignmentDisplayState(assignment.scoringType, assignmentProgress);
-
-                                                      return (
-                                                        <div key={assignment.id} className="flex items-center justify-between">
-                                                          <div className="flex items-center space-x-2">
-                                                            {assignment.scoringType === "status" && getStatusIcon(status)}
-                                                            <span className="text-sm">
-                                                              {assignment.name}
-                                                              {req.comments && (
-                                                                <span className="text-muted-foreground ml-1">
-                                                                  ({req.comments})
-                                                                </span>
-                                                              )}
-                                                            </span>
-                                                          </div>
-                                                          <div className="flex items-center space-x-2">
-                                                            {assignmentProgress && assignment.scoringType === "numeric" && assignmentProgress.numericGrade !== null && (
-                                                              <span className="text-sm mr-2">
-                                                                Score: {parseFloat(assignmentProgress.numericGrade).toFixed(1)}
-                                                              </span>
-                                                            )}
-                                                            <UpdateAssignmentStatusDialog
-                                                              classId={parsedClassId}
-                                                              studentId={student.id}
-                                                              assignment={assignment}
-                                                              currentProgress={assignmentProgress}
-                                                            />
-                                                          </div>
-                                                        </div>
-                                                      );
-                                                    })}
+                                                  <div className="flex items-center gap-3 text-xs">
+                                                    <span className="flex items-center gap-1" title="Completed">
+                                                      <CheckCircle2 className="h-3 w-3 text-green-600" aria-hidden="true" />
+                                                      <span className="sr-only">Completed:</span>
+                                                      {completed}
+                                                    </span>
+                                                    <span className="flex items-center gap-1" title="Work-in-Progress">
+                                                      <Circle className="h-3 w-3 text-yellow-600" aria-hidden="true" />
+                                                      <span className="sr-only">Work-in-Progress:</span>
+                                                      {inProgress}
+                                                    </span>
+                                                    <span className="flex items-center gap-1" title="Not submitted">
+                                                      <XCircle className="h-3 w-3 text-bad" aria-hidden="true" />
+                                                      <span className="sr-only">Not submitted:</span>
+                                                      {notSubmitted}
+                                                    </span>
+                                                    <span className="flex items-center gap-1" title="Not yet due or not graded yet">
+                                                      <Clock className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+                                                      <span className="sr-only">Not yet due or graded:</span>
+                                                      {pending}
+                                                    </span>
                                                   </div>
                                                 </div>
-                                              );
-                                            });
-                                          })()}
+                                                {/* Mini progress bar */}
+                                                <div className="w-full bar-track rounded-full h-1.5 mb-2">
+                                                  <div className="flex h-1.5 rounded-full overflow-hidden">
+                                                    <div className="bg-green-600" style={{ width: `${(completed / totalInGroup) * 100}%` }} />
+                                                    <div className="bg-yellow-500" style={{ width: `${(inProgress / totalInGroup) * 100}%` }} />
+                                                  </div>
+                                                </div>
+                                                {isExpanded && (
+                                                  <BreakdownRows
+                                                    items={groupItems}
+                                                    renderAction={({ assignment, progress }) => (
+                                                      <UpdateAssignmentStatusDialog
+                                                        classId={parsedClassId}
+                                                        studentId={student.id}
+                                                        assignment={assignment}
+                                                        currentProgress={progress}
+                                                      />
+                                                    )}
+                                                  />
+                                                )}
+                                              </div>
+                                            );
+                                          })}
                                         </div>
                                       </div>
                                     )}

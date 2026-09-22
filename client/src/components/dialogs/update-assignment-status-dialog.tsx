@@ -90,6 +90,10 @@ export function UpdateAssignmentStatusDialog({ classId, studentId, assignment, c
       queryClient.invalidateQueries({
         queryKey: [`/api/classes/${classId}/students/${studentId}/progress`],
       });
+      // The first grade on an assignment changes whether it counts as missed.
+      queryClient.invalidateQueries({
+        queryKey: [`/api/classes/${classId}/assignments`],
+      });
       toast({
         title: "Success",
         description: "Assignment progress updated successfully",

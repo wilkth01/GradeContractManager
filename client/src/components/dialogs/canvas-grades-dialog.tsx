@@ -142,6 +142,7 @@ export function CanvasGradesDialog({ classId }: Props) {
     onSuccess: (result) => {
       setApplied(result);
       queryClient.invalidateQueries({ queryKey: [`/api/classes/${classId}/students/progress`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/classes/${classId}/assignments`] });
       queryClient.invalidateQueries({ queryKey: [`/api/classes/${classId}/absences`] });
       toast({
         title: "Grades imported",

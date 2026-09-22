@@ -2,7 +2,7 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { auditService } from "../audit";
 import { sendMessagesSchema } from "@shared/schema";
-import { evaluateStanding } from "@shared/contract-evaluation";
+import { evaluateStanding, withGradingStarted } from "@shared/contract-evaluation";
 import { composeContractMessage, type ComposedMessage } from "@shared/contract-messages";
 import { meetsParticipationBar } from "@shared/constants";
 import { requireClassOwner } from "../middleware";
@@ -38,6 +38,7 @@ async function composeForClass(
     ]);
 
   const wanted = studentIds ? new Set(studentIds) : null;
+  const gradedAssignments = withGradingStarted(assignments, allProgress);
 
   return students
     .filter((student) => !wanted || wanted.has(student.id))
@@ -50,7 +51,7 @@ async function composeForClass(
         contracts,
         chosenContractId:
           studentContracts.find((sc) => sc.studentId === student.id)?.contractId ?? null,
-        assignments,
+        assignments: gradedAssignments,
         progress: allProgress.filter((p) => p.studentId === student.id),
         participationSessions: participation.filter(
           (r) => r.studentId === student.id && meetsParticipationBar(r.participation, cls.participationBar)

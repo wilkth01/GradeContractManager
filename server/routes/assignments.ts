@@ -4,6 +4,7 @@ import { storage } from "../storage";
 import { insertAssignmentSchema } from "@shared/schema";
 import { requireClassOwner, requireClassMember } from "../middleware";
 import { asyncHandler, BadRequestError, NotFoundError } from "../errors";
+import { withGradingStarted } from "@shared/contract-evaluation";
 
 const router = Router();
 
@@ -31,12 +32,18 @@ router.post(
 );
 
 // List assignments. Enrolled students need this to see their contract work.
+//
+// Each carries gradingStarted, so a student's page can tell "you missed this"
+// from "nobody has been graded on this yet" without seeing anyone else's grades.
 router.get(
   "/api/classes/:classId/assignments",
   requireClassMember(),
   asyncHandler(async (req, res) => {
     const assignments = await storage.getAssignmentsByClass(req.cls!.id);
-    res.json(assignments);
+    const progress = assignments.length > 0
+      ? await storage.getStudentProgressForClass(req.cls!.id)
+      : [];
+    res.json(withGradingStarted(assignments, progress));
   })
 );
 

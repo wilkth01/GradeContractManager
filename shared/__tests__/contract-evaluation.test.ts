@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { computeCategoryAverage, isPastDue } from "../contract-evaluation";
+import {
+  assignmentStanding,
+  computeCategoryAverage,
+  isPastDue,
+  withGradingStarted,
+} from "../contract-evaluation";
 
 const NOW = new Date("2026-03-15T12:00:00Z");
 const PAST = "2026-03-01";
@@ -109,5 +114,76 @@ describe("computeCategoryAverage", () => {
 
   it("returns an empty result for an empty category", () => {
     expect(computeCategoryAverage([], NOW).isEmpty).toBe(true);
+  });
+});
+
+describe("work nobody has been graded on yet", () => {
+  it("leaves it out of the average instead of zeroing it", () => {
+    // The Hypothesis case: four readings graded, five more past due whose
+    // grades have not been pulled for anyone. The average is over four.
+    const entries = [
+      ...Array.from({ length: 4 }, () => ({ numericGrade: "4", dueDate: PAST, gradingStarted: true })),
+      ...Array.from({ length: 5 }, () => ({ numericGrade: null, dueDate: PAST, gradingStarted: false })),
+    ];
+
+    const result = computeCategoryAverage(entries, NOW);
+
+    expect(result.average).toBe(4);
+    expect(result.counted).toBe(4);
+    expect(result.awaitingGrades).toBe(5);
+    expect(result.missed).toBe(0);
+  });
+
+  it("still zeroes a miss once others have been graded on it", () => {
+    const result = computeCategoryAverage(
+      [
+        { numericGrade: "4", dueDate: PAST, gradingStarted: true },
+        { numericGrade: null, dueDate: PAST, gradingStarted: true },
+      ],
+      NOW
+    );
+
+    expect(result.average).toBe(2);
+    expect(result.missed).toBe(1);
+  });
+
+  it("treats an unknown grading state as started", () => {
+    const result = computeCategoryAverage([{ numericGrade: null, dueDate: PAST }], NOW);
+    expect(result.missed).toBe(1);
+  });
+});
+
+describe("withGradingStarted", () => {
+  it("marks an assignment once any student has a grade or status on it", () => {
+    const marked = withGradingStarted(
+      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+      [
+        { assignmentId: 1, numericGrade: "3.00" },
+        { assignmentId: 2, status: 0 },
+        { assignmentId: 3, numericGrade: null, status: null },
+      ]
+    );
+
+    expect(marked.map((a) => a.gradingStarted)).toEqual([true, true, false, false]);
+  });
+});
+
+describe("assignmentStanding", () => {
+  const numeric = { scoringType: "numeric" as const, dueDate: PAST, gradingStarted: true };
+
+  it("separates missing, not yet due, and not graded yet", () => {
+    expect(assignmentStanding(numeric, null, NOW)).toBe("not-submitted");
+    expect(assignmentStanding({ ...numeric, dueDate: FUTURE }, null, NOW)).toBe("not-yet-due");
+    expect(assignmentStanding({ ...numeric, gradingStarted: false }, null, NOW)).toBe("awaiting-grades");
+    expect(assignmentStanding(numeric, { numericGrade: "3.25" }, NOW)).toBe("completed");
+  });
+
+  it("takes a recorded Not Submitted at its word, even before the due date", () => {
+    expect(
+      assignmentStanding({ scoringType: "status", dueDate: FUTURE }, { status: 0 }, NOW)
+    ).toBe("not-submitted");
+    expect(
+      assignmentStanding({ scoringType: "status", dueDate: FUTURE }, { status: 1 }, NOW)
+    ).toBe("in-progress");
   });
 });

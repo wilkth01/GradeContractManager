@@ -286,6 +286,32 @@ describe("Assignments", () => {
     expect(res.status).toBe(403);
   });
 
+  it("says which assignments anyone has been graded on, without revealing grades", async () => {
+    const prof = instructor("prof");
+    const sam = student("sam");
+    const alex = student("alex");
+    const cls = addClass(prof.id);
+    enroll(cls.id, sam.id);
+    enroll(cls.id, alex.id);
+    const graded = addAssignment(cls.id, { name: "Graded", scoringType: "numeric" });
+    addAssignment(cls.id, { name: "Ungraded", scoringType: "numeric" });
+
+    const profAgent = await loginAs(app, "prof", PASSWORD);
+    await profAgent
+      .post(`/api/classes/${cls.id}/students/${alex.id}/assignments/${graded.id}/progress`)
+      .send({ numericGrade: 3.5 });
+
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent.get(`/api/classes/${cls.id}/assignments`);
+
+    const byName = Object.fromEntries(
+      res.body.map((a: { name: string; gradingStarted: boolean }) => [a.name, a])
+    );
+    expect(byName.Graded.gradingStarted).toBe(true);
+    expect(byName.Ungraded.gradingStarted).toBe(false);
+    expect(JSON.stringify(res.body)).not.toContain("3.5");
+  });
+
   it("returns assignments in displayOrder", async () => {
     const prof = instructor("prof");
     const cls = addClass(prof.id);

@@ -217,6 +217,36 @@ describe("evaluateContract", () => {
   });
 });
 
+describe("averages while grades are still coming in", () => {
+  it("does not hold ungraded past-due readings against anyone", () => {
+    const [first, second, ...rest] = perusall;
+    const result = evaluateContract({
+      contract: contractA(),
+      assignments: [
+        ...discussionLogs,
+        first,
+        second,
+        ...rest.map((a) => ({ ...a, gradingStarted: false })),
+        svp1,
+      ],
+      progress: [
+        ...logsComplete(7),
+        { assignmentId: first.id, numericGrade: "4" },
+        { assignmentId: second.id, numericGrade: "3.5" },
+        ...svpComplete(),
+      ],
+      participationSessions: 0,
+      absences: 0,
+      now: NOW,
+    });
+
+    const average = result.requirements.find((r) => r.kind === "category-average")!;
+    expect(average.detail).toBe("3.75 / 3.5");
+    expect(average.met).toBe(true);
+    expect(result.informational).toContain("6 items in Perusall Annotations not graded yet");
+  });
+});
+
 describe("absence penalties above the contract tiers", () => {
   const policy = { absencePenaltyThreshold: 6, absenceFailureThreshold: 8 };
 
