@@ -110,10 +110,21 @@ export class CanvasClient {
         );
       }
 
+      if (response.status === 401) {
+        throw new CanvasError("Canvas rejected the access token", 401);
+      }
+
+      // The query string can run to hundreds of characters; the route and
+      // Canvas's own explanation are what tell the instructor what happened.
+      let detail = "";
+      try {
+        const parsed = JSON.parse(body);
+        detail = parsed?.errors?.[0]?.message ?? parsed?.message ?? "";
+      } catch {
+        detail = "";
+      }
       throw new CanvasError(
-        response.status === 401
-          ? "Canvas rejected the access token"
-          : `Canvas returned ${response.status} for ${path}`,
+        `Canvas returned ${response.status} for ${path.split("?")[0]}${detail ? `: ${detail}` : ""}`,
         response.status
       );
     }
