@@ -196,12 +196,41 @@ export class CanvasClient {
 
     for (let i = 0; i < assignmentIds.length; i += BATCH) {
       const batch = assignmentIds.slice(i, i + BATCH);
-      const query = batch.map((id) => `assignment_ids[]=${id}`).join("&");
-      results.push(
-        ...(await this.list<CanvasSubmission>(
-          `/courses/${courseId}/students/submissions?student_ids[]=all&${query}&per_page=100`
-        ))
-      );
+      const fetchBatch = (ids: number[]) =>
+        this.list<CanvasSubmission>(
+          `/courses/${courseId}/students/submissions?student_ids[]=all&${ids
+            .map((id) => `assignment_ids[]=${id}`)
+            .join("&")}&per_page=100`
+        );
+
+      try {
+        results.push(...(await fetchBatch(batch)));
+      } catch (error) {
+        if (!(error instanceof CanvasError) || error.status !== 403 || error.rateLimited) throw error;
+
+        // Canvas answers 403 without saying which assignment it objects to.
+        // Retrying one at a time names the culprits instead of failing blind.
+        const refused: number[] = [];
+        for (const id of batch) {
+          try {
+            results.push(...(await fetchBatch([id])));
+          } catch (inner) {
+            if (inner instanceof CanvasError && inner.status === 403 && !inner.rateLimited) {
+              refused.push(id);
+            } else {
+              throw inner;
+            }
+          }
+        }
+        if (refused.length > 0) {
+          throw new CanvasError(
+            refused.length === batch.length
+              ? `Canvas refused access to grades for course ${courseId} (403 on every assignment). Check that this is the right course and that your Canvas account can view all grades in it.`
+              : `Canvas refused access to these Canvas assignment IDs (403): ${refused.join(", ")}. They may belong to a different course; remap them.`,
+            403
+          );
+        }
+      }
     }
 
     return results;
