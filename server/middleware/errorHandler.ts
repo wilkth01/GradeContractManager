@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { AppError, ValidationError } from "../errors";
+import { CanvasError } from "../services/canvas/client";
 
 /**
  * Centralized error handler.
@@ -28,6 +29,12 @@ export function errorHandler(
         isOperational: err.isOperational,
       }),
     });
+  }
+
+  // A failed Canvas call is an upstream problem the instructor can act on
+  // (rate limit, revoked token, missing permission), not a fault in this app.
+  if (err instanceof CanvasError) {
+    return res.status(502).json({ message: err.message });
   }
 
   if (err instanceof AppError) {
