@@ -1,5 +1,6 @@
 import type { CategoryRequirement } from "./schema";
 import {
+  MAX_NUMERIC_GRADE,
   getAssignmentDisplayState,
   getDisplayStateLabel,
   isOverAbsenceLimit,
@@ -255,6 +256,22 @@ export interface RequirementResult {
   met: boolean;
   /** Short human-readable state, e.g. "5 of 7" or "3.20 / 3.50". */
   detail: string;
+  /**
+   * How many items the student is short, counting only work that nothing still
+   * coming can satisfy: past due and not done. Zero while they merely have not
+   * got there yet, which is what separates "behind" from "unmet". Not
+   * meaningful for absences.
+   */
+  shortfall: number;
+  /** What would bring them back in line, for work they are behind on. */
+  catchUp: string[];
+  /**
+   * Behind, and out of reach even if everything still pending goes perfectly.
+   * Only category averages can say this, since they alone have a known ceiling.
+   */
+  unreachable?: boolean;
+  /** Absences only: met, but with nothing left to spare. */
+  atLimit?: boolean;
 }
 
 export interface ContractResult {
@@ -269,6 +286,32 @@ export interface ContractResult {
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/**
+ * Whether one required item can still count toward the contract.
+ *
+ * "pending" covers everything not yet decided against the student: not yet due,
+ * past due but not graded for anyone, or in progress and still before its due
+ * date. "missed" is past due and not done, where only making it up helps.
+ */
+function itemOutlook(
+  assignment: EvaluationAssignment,
+  progress: EvaluationProgress | undefined,
+  now: Date
+): "complete" | "pending" | "missed" {
+  switch (assignmentStanding(assignment, progress, now)) {
+    case "completed":
+      return "complete";
+    case "not-yet-due":
+    case "awaiting-grades":
+      return "pending";
+    case "in-progress":
+      return isPastDue(assignment.dueDate, now) ? "missed" : "pending";
+    case "not-submitted":
+    default:
+      return "missed";
+  }
+}
 
 /**
  * Evaluate one contract for one student.
@@ -321,6 +364,15 @@ export function evaluateContract(input: EvaluationInput): ContractResult {
         now
       );
       const met = !stats.isEmpty && stats.average >= minAverage;
+
+      // Behind only once something has actually been graded or missed. The
+      // ceiling assumes top marks on everything still to come.
+      const behind = !stats.isEmpty && !met;
+      const open = stats.pending + stats.awaitingGrades;
+      const ceiling =
+        (stats.average * stats.counted + open * MAX_NUMERIC_GRADE) / (stats.counted + open);
+      const unreachable = behind && ceiling < minAverage;
+
       requirements.push({
         kind: "category-average",
         label: group,
@@ -328,6 +380,16 @@ export function evaluateContract(input: EvaluationInput): ContractResult {
         detail: stats.isEmpty
           ? `nothing graded yet / ${minAverage.toFixed(1)} needed`
           : `${stats.average.toFixed(2)} / ${minAverage.toFixed(1)}`,
+        shortfall: behind ? 1 : 0,
+        unreachable,
+        catchUp: behind
+          ? [
+              `raise your ${group} average from ${stats.average.toFixed(2)} to ${minAverage.toFixed(1)}` +
+                (stats.missed > 0
+                  ? ` (${plural(stats.missed, "missed item")} counting as zero)`
+                  : ""),
+            ]
+          : [],
       });
       if (!met) {
         actionable.push(
@@ -346,11 +408,40 @@ export function evaluateContract(input: EvaluationInput): ContractResult {
 
     if (requiredCount > 0) {
       const met = complete >= requiredCount;
+
+      const outlooks = items.map(({ assignment }) => ({
+        assignment,
+        outlook: itemOutlook(assignment, progressFor(assignment.id), now),
+      }));
+      const pendingCount = outlooks.filter((o) => o.outlook === "pending").length;
+      const shortfall = Math.max(0, requiredCount - complete - pendingCount);
+
+      const catchUp: string[] = [];
+      if (shortfall > 0) {
+        const missed = outlooks.filter((o) => o.outlook === "missed");
+        const revisable = missed.filter(
+          (o) =>
+            getAssignmentDisplayState(o.assignment.scoringType, progressFor(o.assignment.id)) ===
+            "in-progress"
+        );
+        const toRevise = Math.min(revisable.length, shortfall);
+        const toComplete = shortfall - toRevise;
+        if (toRevise > 0) {
+          catchUp.push(`revise ${plural(toRevise, `work-in-progress ${group} item`)}`);
+        }
+        if (toComplete > 0) {
+          const open = missed.map((o) => o.assignment.name).join(", ");
+          catchUp.push(`complete ${plural(toComplete, `more ${group} item`)} (still open: ${open})`);
+        }
+      }
+
       requirements.push({
         kind: "category-count",
         label: group,
         met,
         detail: `${complete} of ${requiredCount}`,
+        shortfall,
+        catchUp,
       });
       if (!met) {
         const gap = requiredCount - complete;
@@ -376,6 +467,19 @@ export function evaluateContract(input: EvaluationInput): ContractResult {
         const met =
           minPoints != null ? score >= minPoints : state === "completed";
 
+        // Behind on a single required item: graded below its floor, or past
+        // due and not done. Work not yet due, or not yet graded for anyone, is
+        // not held against the student.
+        const hasGrade =
+          studentProgress?.numericGrade !== null &&
+          studentProgress?.numericGrade !== undefined &&
+          studentProgress?.numericGrade !== "";
+        const behind = met
+          ? false
+          : minPoints != null
+            ? hasGrade || (isPastDue(assignment.dueDate, now) && assignment.gradingStarted !== false)
+            : itemOutlook(assignment, studentProgress, now) === "missed";
+
         requirements.push({
           kind: "assignment",
           label: assignment.name,
@@ -384,6 +488,16 @@ export function evaluateContract(input: EvaluationInput): ContractResult {
             minPoints != null
               ? `${score.toFixed(1)} / ${minPoints}`
               : getDisplayStateLabel(state),
+          shortfall: behind ? 1 : 0,
+          catchUp: behind
+            ? [
+                minPoints != null
+                  ? `reach ${minPoints} points on ${assignment.name}`
+                  : state === "in-progress"
+                    ? `revise ${assignment.name}`
+                    : `complete ${assignment.name}`,
+              ]
+            : [],
         });
 
         if (!met) {
@@ -409,6 +523,13 @@ export function evaluateContract(input: EvaluationInput): ContractResult {
       label: "Participation",
       met,
       detail: `${participationSessions} of ${requiredParticipation} sessions`,
+      // The semester's length is not known here, so falling short so far is
+      // never enough on its own to call a student behind. It is reported as a
+      // need for anyone who is already flagged for something else.
+      shortfall: 0,
+      catchUp: met
+        ? []
+        : [`participate in ${plural(requiredParticipation - participationSessions, "more session")}`],
     });
     if (!met) {
       actionable.push(
@@ -424,6 +545,9 @@ export function evaluateContract(input: EvaluationInput): ContractResult {
     label: "Absences",
     met: absencesMet,
     detail: `${formatAbsences(absences)} of ${maxAbsences} allowed`,
+    shortfall: 0,
+    catchUp: [],
+    atLimit: absencesMet && absences > 0 && absences >= maxAbsences,
   });
   if (!absencesMet) {
     // Absences cannot be undone, so this is never an action item.

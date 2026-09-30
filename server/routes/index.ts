@@ -7,6 +7,7 @@ import studentsRouter from "./students";
 import attendanceRouter from "./attendance";
 import invitationsRouter from "./invitations";
 import analyticsRouter from "./analytics";
+import atRiskRouter from "./at-risk";
 import accountRecoveryRouter from "./account-recovery";
 import auditRouter from "./audit";
 import canvasRouter from "./canvas";
@@ -32,6 +33,7 @@ export function registerRouteModules(app: Express): void {
   app.use(attendanceRouter);
   app.use(invitationsRouter);
   app.use(analyticsRouter);
+  app.use(atRiskRouter);
   app.use(accountRecoveryRouter);
   app.use(auditRouter);
   app.use(canvasRouter);

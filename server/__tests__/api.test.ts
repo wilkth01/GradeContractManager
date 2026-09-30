@@ -1382,3 +1382,68 @@ describe("Contract import from a summary table", () => {
     expect(db.gradeContracts).toHaveLength(0);
   });
 });
+
+describe("At-risk students", () => {
+  function atRiskSetup(ownerId: number, className: string, archived = false) {
+    const cls = addClass(ownerId, { name: className, isArchived: archived });
+    const a1 = addAssignment(cls.id, { name: "Log 1", moduleGroup: "Logs", dueDate: new Date("2020-01-01") });
+    const a2 = addAssignment(cls.id, { name: "Log 2", moduleGroup: "Logs", dueDate: new Date("2020-01-01") });
+    const contract = addContract(cls.id, {
+      grade: "B",
+      assignments: [{ id: a1.id }, { id: a2.id }],
+      maxAbsences: 3,
+    });
+    return { cls, contract, a1, a2 };
+  }
+
+  it("groups flagged students by class, red before yellow", async () => {
+    const prof = instructor("prof");
+    const sam = addUser({ role: "student", username: "sam", password: hashed, fullName: "Doe, Sam" });
+    const { cls, contract } = atRiskSetup(prof.id, "PHIL 352");
+    enroll(cls.id, sam.id, contract.id);
+    const { db } = await import("./helpers/fakeStorage");
+    db.absences.push({ id: 1, studentId: sam.id, classId: cls.id, absences: "4", source: "canvas" } as any);
+
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const res = await agent.get("/api/instructor/at-risk");
+
+    expect(res.status).toBe(200);
+    expect(res.body.classes).toHaveLength(1);
+    const entry = res.body.classes[0];
+    expect(entry.className).toBe("PHIL 352");
+    // Two past-due logs missed and over the absence limit.
+    expect(entry.red.map((s: any) => s.fullName)).toEqual(["Doe, Sam"]);
+    expect(entry.red[0].manyAbsences).toBe(true);
+    expect(entry.red[0].emailBody).toContain("Hi Sam,");
+    expect(entry.yellow).toEqual([]);
+  });
+
+  it("leaves out archived classes and other instructors' classes", async () => {
+    const prof = instructor("prof");
+    const other = instructor("other");
+    const sam = student("sam");
+
+    const archived = atRiskSetup(prof.id, "Old class", true);
+    enroll(archived.cls.id, sam.id, archived.contract.id);
+    const theirs = atRiskSetup(other.id, "Not mine");
+    enroll(theirs.cls.id, sam.id, theirs.contract.id);
+
+    const agent = await loginAs(app, "prof", PASSWORD);
+    const res = await agent.get("/api/instructor/at-risk");
+
+    expect(res.status).toBe(200);
+    expect(res.body.classes).toEqual([]);
+  });
+
+  it("refuses students", async () => {
+    student("sam");
+    const agent = await loginAs(app, "sam", PASSWORD);
+    const res = await agent.get("/api/instructor/at-risk");
+    expect(res.status).toBe(403);
+  });
+
+  it("requires a login", async () => {
+    const res = await request(app).get("/api/instructor/at-risk");
+    expect(res.status).toBe(401);
+  });
+});

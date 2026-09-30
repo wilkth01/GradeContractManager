@@ -50,6 +50,7 @@ import {
   Copy
 } from "lucide-react";
 import { CreateClassDialog } from "@/components/dialogs/create-class-dialog";
+import { AtRiskPanel } from "@/components/instructor/at-risk-panel";
 import { PasswordResetNotifications } from "@/components/admin/password-reset-notifications";
 import { useLocation } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -379,6 +380,11 @@ export default function InstructorDashboard() {
 
       <main id="main-content" className="container mx-auto px-4 py-8" role="main">
         <div className="grid gap-8">
+          {/* Students out of compliance, worst first */}
+          <section aria-label="Students out of compliance" className="animate-slide-up">
+            <AtRiskPanel />
+          </section>
+
           {/* Password Reset Notifications */}
           <section aria-labelledby="password-reset-heading" className="animate-slide-up">
             <PasswordResetNotifications />
