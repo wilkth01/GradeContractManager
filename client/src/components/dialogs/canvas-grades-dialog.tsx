@@ -16,7 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
@@ -202,7 +201,7 @@ export function CanvasGradesDialog({ classId }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+        <div className="flex-1 min-h-0 max-h-[60vh] overflow-y-auto space-y-4 pr-2">
           {error && (
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4" />
@@ -254,7 +253,7 @@ export function CanvasGradesDialog({ classId }: Props) {
                 </Alert>
               )}
 
-              <ScrollArea className="max-h-[35vh] border rounded-md">
+              <div className="border rounded-md">
                 <div className="divide-y">
                   {Array.from(byAssignment.entries()).map(([assignmentId, changes]) => (
                     <div key={assignmentId} className="p-3 flex items-start gap-3">
@@ -291,7 +290,7 @@ export function CanvasGradesDialog({ classId }: Props) {
                     </div>
                   ))}
                 </div>
-              </ScrollArea>
+              </div>
 
               {preview.data.absenceChanges.length > 0 && (
                 <label className="flex items-center gap-2 text-sm">
@@ -341,7 +340,7 @@ export function CanvasGradesDialog({ classId }: Props) {
                     </SelectContent>
                   </Select>
                 </div>
-                <ScrollArea className="max-h-[45vh] border rounded-md">
+                <div className="border rounded-md">
                   <div className="divide-y">
                     {data.portalAssignments.map((assignment) => (
                       <div key={assignment.id} className="p-3 flex flex-wrap items-center gap-3">
@@ -380,7 +379,7 @@ export function CanvasGradesDialog({ classId }: Props) {
                       </div>
                     ))}
                   </div>
-                </ScrollArea>
+                </div>
               </div>
             )
           )}
